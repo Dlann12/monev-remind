@@ -42,7 +42,9 @@ function submitToken() {
 </script>
 
 <template>
-  <div class="min-h-screen flex flex-col justify-between bg-surface px-margin py-8 max-w-lg mx-auto w-full">
+  <div
+    class="min-h-screen flex flex-col justify-between bg-surface px-margin pt-[calc(env(safe-area-inset-top,0px)+1.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)] max-w-lg mx-auto w-full"
+  >
     <div class="space-y-space-md">
       <!-- Brand Header -->
       <div class="flex items-center gap-space-sm pt-2">

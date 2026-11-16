@@ -21,7 +21,7 @@ const navItems: ReadonlyArray<{ id: AppTab; label: string; icon: string }> = [
 
 <template>
   <nav
-    class="fixed bottom-0 w-full z-40 pb-safe bg-surface/90 backdrop-blur-xl shadow-[0_-4px_20px_rgba(15,56,96,0.06)]"
+    class="sticky bottom-0 w-full z-40 pb-safe bg-surface/90 backdrop-blur-xl shadow-[0_-4px_20px_rgba(15,56,96,0.06)]"
     aria-label="Navigasi Utama"
   >
     <div class="h-16 px-space-xs flex items-center justify-around max-w-lg mx-auto">

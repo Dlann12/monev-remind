@@ -114,7 +114,7 @@ async function handleTestAlarm() {
         @open-profile="isProfileOpen = true"
       />
 
-      <main class="flex-1 flex flex-col relative w-full max-w-lg mx-auto pt-20 pb-24">
+      <main class="flex-1 flex flex-col relative w-full max-w-lg mx-auto pt-4 pb-6">
         <HomeTabView
           v-if="activeTab === 'beranda'"
           :profile="store.profile.value"
@@ -216,7 +216,7 @@ async function handleTestAlarm() {
     <div
       v-if="toastMessage"
       role="status"
-      class="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-inverse-surface text-inverse-on-surface px-4 py-2.5 rounded-full shadow-lg font-label-md text-label-md max-w-[90vw] text-center"
+      class="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+5rem)] left-1/2 -translate-x-1/2 z-50 bg-inverse-surface text-inverse-on-surface px-4 py-2.5 rounded-full shadow-lg font-label-md text-label-md max-w-[90vw] text-center"
     >
       {{ toastMessage }}
     </div>

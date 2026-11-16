@@ -39,7 +39,7 @@ const statusDotClass = computed(() => {
 
 <template>
   <header
-    class="fixed top-0 w-full z-40 pt-safe bg-surface/85 backdrop-blur-xl shadow-[0_1px_8px_rgba(15,56,96,0.05)]"
+    class="sticky top-0 w-full z-40 pt-safe bg-surface/85 backdrop-blur-xl shadow-[0_1px_8px_rgba(15,56,96,0.05)]"
   >
     <div class="h-16 px-margin flex items-center justify-between max-w-lg mx-auto">
       <div class="flex items-center gap-space-sm">
