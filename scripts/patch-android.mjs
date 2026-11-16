@@ -26,9 +26,34 @@ if (missing.length > 0) {
     .map((perm) => `    <uses-permission android:name="${perm}" />`)
     .join('\n')
   manifest = manifest.replace('<application', `${tags}\n\n    <application`)
-  writeFileSync(manifestPath, manifest, 'utf-8')
   console.log(`Added ${missing.length} permissions to AndroidManifest.xml`)
 }
+
+if (!manifest.includes('android:networkSecurityConfig')) {
+  manifest = manifest.replace(
+    '<application',
+    '<application\n        android:networkSecurityConfig="@xml/network_security_config"\n        android:usesCleartextTraffic="true"'
+  )
+  console.log('Added networkSecurityConfig & usesCleartextTraffic to AndroidManifest.xml')
+}
+
+writeFileSync(manifestPath, manifest, 'utf-8')
+
+// 1b. Create res/xml/network_security_config.xml (allows http->https SSO redirect on kemnaker.go.id)
+const xmlDir = resolve(root, 'android/app/src/main/res/xml')
+mkdirSync(xmlDir, { recursive: true })
+const networkSecurityXml = `<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">kemnaker.go.id</domain>
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
+`
+writeFileSync(resolve(xmlDir, 'network_security_config.xml'), networkSecurityXml, 'utf-8')
+console.log('Generated res/xml/network_security_config.xml')
 
 // 2. Write native MonevSyncPlugin.java (uses WebView CookieManager to fetch /users/me and /users/me/home)
 const javaPkgDir = resolve(

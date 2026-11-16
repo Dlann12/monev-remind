@@ -385,27 +385,38 @@ export async function openMonevPortalInApp(
   }
 
   let finished = false
+  const verifyWithDelays = (delaysMs: number[]) => {
+    for (const delay of delaysMs) {
+      setTimeout(async () => {
+        if (finished) return
+        const ok = await onDashboardVerify?.()
+        if (ok && !finished) {
+          finished = true
+          navHandle?.remove().catch(() => {})
+          closedHandle.remove().catch(() => {})
+          await InAppBrowser.close().catch(() => {})
+        }
+      }, delay)
+    }
+  }
+
   const navHandle = autoCloseOnLogin
     ? await InAppBrowser.addListener(
         'browserPageNavigationCompleted',
         ({ url }) => {
+          if (finished || !url) return
           if (
-            finished ||
-            !url ||
-            !url.startsWith('https://monev.maganghub.kemnaker.go.id/dashboard')
+            url.startsWith('https://monev.maganghub.kemnaker.go.id/sso/callback') ||
+            url.startsWith(
+              'https://monev.maganghub.kemnaker.go.id/authenticate/login/callback'
+            )
           ) {
+            verifyWithDelays([1800, 4000, 6500])
             return
           }
-          setTimeout(async () => {
-            if (finished) return
-            const ok = await onDashboardVerify?.()
-            if (ok && !finished) {
-              finished = true
-              navHandle?.remove().catch(() => {})
-              closedHandle.remove().catch(() => {})
-              await InAppBrowser.close().catch(() => {})
-            }
-          }, 1200)
+          if (url.startsWith('https://monev.maganghub.kemnaker.go.id/dashboard')) {
+            verifyWithDelays([1200])
+          }
         }
       )
     : null
