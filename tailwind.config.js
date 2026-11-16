@@ -1,0 +1,103 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  darkMode: 'class',
+  content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}'],
+  theme: {
+    extend: {
+      colors: {
+        background: '#f8f9ff',
+        secondary: '#006972',
+        'inverse-on-surface': '#eaf1ff',
+        'surface-tint': '#3e608a',
+        surface: '#f8f9ff',
+        'primary-fixed-dim': '#a6c9f9',
+        'tertiary-fixed-dim': '#3fdeb7',
+        tertiary: '#00271e',
+        'surface-variant': '#d3e4fe',
+        'on-primary-fixed': '#001c38',
+        'on-tertiary-fixed': '#002018',
+        'surface-container': '#e5eeff',
+        'on-background': '#0b1c30',
+        error: '#ba1a1a',
+        'outline-variant': '#c3c6cf',
+        'on-tertiary': '#ffffff',
+        'on-secondary': '#ffffff',
+        'on-tertiary-fixed-variant': '#005140',
+        'secondary-fixed': '#8cf2ff',
+        'surface-bright': '#f8f9ff',
+        'on-tertiary-container': '#00b592',
+        'primary-fixed': '#d3e4ff',
+        'on-primary': '#ffffff',
+        'secondary-container': '#74eefd',
+        'tertiary-fixed': '#63fbd3',
+        'secondary-fixed-dim': '#5ad7e6',
+        'on-secondary-fixed': '#001f23',
+        primary: '#002242',
+        'on-error-container': '#93000a',
+        'inverse-primary': '#a6c9f9',
+        'error-container': '#ffdad6',
+        'surface-container-low': '#eff4ff',
+        'surface-container-lowest': '#ffffff',
+        'on-surface': '#0b1c30',
+        outline: '#73777f',
+        'on-primary-container': '#80a2d0',
+        'surface-dim': '#cbdbf5',
+        'inverse-surface': '#213145',
+        'on-surface-variant': '#43474e',
+        'on-error': '#ffffff',
+        'surface-container-highest': '#d3e4fe',
+        'on-primary-fixed-variant': '#244871',
+        'on-secondary-container': '#006b75',
+        'primary-container': '#0f3860',
+        'on-secondary-fixed-variant': '#004f56',
+        'surface-container-high': '#dce9ff',
+        'tertiary-container': '#003f31'
+      },
+      borderRadius: {
+        DEFAULT: '0.25rem',
+        lg: '0.5rem',
+        xl: '0.75rem',
+        full: '9999px'
+      },
+      spacing: {
+        'space-xs': '0.25rem',
+        'gutter-sm': '0.75rem',
+        'space-lg': '1.5rem',
+        'space-sm': '0.5rem',
+        'space-xl': '2rem',
+        'space-md': '1rem',
+        'margin-tablet': '1.5rem',
+        gutter: '1rem',
+        margin: '1rem'
+      },
+      fontFamily: {
+        'label-lg': ['Inter', 'sans-serif'],
+        'body-lg': ['Inter', 'sans-serif'],
+        'headline-lg': ['"Plus Jakarta Sans"', 'sans-serif'],
+        'headline-md': ['"Plus Jakarta Sans"', 'sans-serif'],
+        'body-md': ['Inter', 'sans-serif'],
+        'title-md': ['"Plus Jakarta Sans"', 'sans-serif'],
+        'headline-lg-mobile': ['"Plus Jakarta Sans"', 'sans-serif'],
+        'label-md': ['Inter', 'sans-serif'],
+        'label-sm': ['Inter', 'sans-serif'],
+        'body-sm': ['Inter', 'sans-serif'],
+        'headline-sm': ['"Plus Jakarta Sans"', 'sans-serif']
+      },
+      fontSize: {
+        'label-lg': ['14px', { lineHeight: '20px', letterSpacing: '0.01em', fontWeight: '600' }],
+        'body-lg': ['16px', { lineHeight: '24px', fontWeight: '400' }],
+        'headline-lg': ['32px', { lineHeight: '40px', letterSpacing: '-0.02em', fontWeight: '700' }],
+        'headline-md': ['22px', { lineHeight: '30px', letterSpacing: '-0.01em', fontWeight: '600' }],
+        'body-md': ['14px', { lineHeight: '20px', fontWeight: '400' }],
+        'title-md': ['16px', { lineHeight: '24px', fontWeight: '600' }],
+        'headline-lg-mobile': ['26px', { lineHeight: '34px', letterSpacing: '-0.02em', fontWeight: '700' }],
+        'label-md': ['12px', { lineHeight: '16px', letterSpacing: '0.02em', fontWeight: '600' }],
+        'label-sm': ['10px', { lineHeight: '14px', letterSpacing: '0.04em', fontWeight: '700' }],
+        'body-sm': ['12px', { lineHeight: '18px', fontWeight: '400' }],
+        'headline-sm': ['18px', { lineHeight: '26px', fontWeight: '600' }]
+      }
+    }
+  },
+  plugins: []
+}
+

@@ -1,0 +1,224 @@
+<script setup lang="ts">
+import { shallowRef } from 'vue'
+import AuthLoginGate from '@/components/auth/AuthLoginGate.vue'
+import AppHeader from '@/components/layout/AppHeader.vue'
+import BottomNav from '@/components/layout/BottomNav.vue'
+import HomeTabView from '@/components/home/HomeTabView.vue'
+import ScheduleTabView from '@/components/schedule/ScheduleTabView.vue'
+import HistoryTabView from '@/components/history/HistoryTabView.vue'
+import AlarmPopupModal from '@/components/modals/AlarmPopupModal.vue'
+import NotificationsModal from '@/components/modals/NotificationsModal.vue'
+import PortalConnectModal from '@/components/modals/PortalConnectModal.vue'
+import ProfileModal from '@/components/modals/ProfileModal.vue'
+import { useMagangStore } from '@/composables/useMagangStore'
+import { useReminderEngine } from '@/composables/useReminderEngine'
+import type { AppTab } from '@/types/app'
+
+const store = useMagangStore()
+const reminder = useReminderEngine()
+
+const activeTab = shallowRef<AppTab>('beranda')
+const isNotificationsOpen = shallowRef(false)
+const isProfileOpen = shallowRef(false)
+const isConnectPortalOpen = shallowRef(false)
+const toastMessage = shallowRef('')
+
+function showToast(msg: string) {
+  toastMessage.value = msg
+  setTimeout(() => {
+    if (toastMessage.value === msg) toastMessage.value = ''
+  }, 3500)
+}
+
+async function handleSyncNow() {
+  const res = await store.syncPortalStatus()
+  if (res.outcome === 'filled' || res.outcome === 'off_day') {
+    reminder.dismissAlert()
+  }
+  showToast(res.note)
+}
+
+async function handleLoginPortal() {
+  await store.openPortalForLogin((res) => {
+    showToast(res.note)
+  })
+}
+
+async function handleOpenPortal() {
+  reminder.dismissAlert()
+  await store.openPortalAndSync((res) => {
+    showToast(res.note)
+  })
+}
+
+async function handleConnectToken(token: string) {
+  const res = await store.connectWithAccessToken(token)
+  showToast(res.note)
+  if (res.outcome === 'filled' || res.outcome === 'unfilled' || res.outcome === 'off_day') {
+    isConnectPortalOpen.value = false
+  }
+}
+
+async function handleDisconnectPortal() {
+  await store.disconnectPortal()
+  isConnectPortalOpen.value = false
+  isProfileOpen.value = false
+  activeTab.value = 'beranda'
+  showToast('Berhasil keluar dari sesi MagangHub.')
+}
+
+async function handleTestAlarm() {
+  const res = await store.triggerTestReminder()
+  reminder.showAlertBanner({
+    title: res.title,
+    body: res.body,
+    isSessionWarning: store.isSessionExpired.value
+  })
+  if (res.telegramResult && !res.telegramResult.ok) {
+    showToast(`Alarm lokal berbunyi. Telegram: ${res.telegramResult.error}`)
+    return
+  }
+  showToast('Alarm pengingat Monev dipicu!')
+}
+</script>
+
+<template>
+  <div class="min-h-screen flex flex-col bg-surface text-on-surface w-full">
+    <div
+      v-if="store.isLoading.value"
+      class="flex-1 flex items-center justify-center px-margin text-center text-on-surface-variant font-body-md text-body-md"
+    >
+      Memuat sesi Monev MagangHub...
+    </div>
+
+    <!-- Mandatory Login Gate before accessing app -->
+    <AuthLoginGate
+      v-else-if="!store.isAuthenticated.value"
+      :profile="store.profile.value"
+      :is-syncing="store.isSyncingPortal.value"
+      :is-session-expired="store.isSessionExpired.value"
+      @login-with-portal="handleLoginPortal"
+      @sync-existing-session="handleSyncNow"
+      @connect-with-token="handleConnectToken"
+    />
+
+    <!-- Authenticated App Shell -->
+    <template v-else>
+      <AppHeader
+        :active-tab="activeTab"
+        :unread-count="store.unreadNotificationsCount.value"
+        :portal-sync-state="store.profile.value.portalSyncState"
+        :is-session-expired="store.isSessionExpired.value"
+        :photo-url="store.profile.value.photoUrl"
+        @open-notifications="isNotificationsOpen = true"
+        @open-profile="isProfileOpen = true"
+      />
+
+      <main class="flex-1 flex flex-col relative w-full max-w-lg mx-auto pt-20 pb-24">
+        <HomeTabView
+          v-if="activeTab === 'beranda'"
+          :profile="store.profile.value"
+          :schedule="store.schedule.value"
+          :alarms="store.alarms.value"
+          :active-alarms-count="store.activeAlarmsCount.value"
+          :today-key="store.todayKey.value"
+          :today-record="store.todayRecord.value"
+          :national-holiday-name="store.nationalHolidayToday.value"
+          :is-catch-up-needed="store.isCatchUpNeeded.value"
+          :is-session-expired="store.isSessionExpired.value"
+          :is-syncing-portal="store.isSyncingPortal.value"
+          :status-meta="reminder.statusMeta.value"
+          :countdown-text="reminder.countdownText.value"
+          :compliance-stats="store.complianceStats.value"
+          @toggle-holiday="store.toggleHolidayToday()"
+          @toggle-alarm="store.toggleAlarm($event)"
+          @test-alarm="handleTestAlarm"
+          @open-portal="handleOpenPortal"
+          @sync-now="handleSyncNow"
+          @open-connect-modal="isConnectPortalOpen = true"
+          @navigate-tab="activeTab = $event"
+        />
+
+        <ScheduleTabView
+          v-else-if="activeTab === 'jadwal-alarm'"
+          :schedule="store.schedule.value"
+          :alarms="store.alarms.value"
+          :profile="store.profile.value"
+          :is-holiday-today="
+            store.todayRecord.value.isHolidayOverride ||
+            store.todayRecord.value.status === 'libur'
+          "
+          :national-holiday-name="store.nationalHolidayToday.value"
+          @update-schedule="store.updateSchedule($event)"
+          @toggle-alarm="store.toggleAlarm($event)"
+          @update-alarm-time="(id, time) => store.updateAlarmTime(id, time)"
+          @toggle-holiday-today="store.toggleHolidayToday()"
+          @test-alarm="handleTestAlarm"
+          @update-profile="store.updateProfile($event)"
+        />
+
+        <HistoryTabView
+          v-else-if="activeTab === 'riwayat'"
+          :records="store.records.value"
+          :is-syncing="store.isSyncingPortal.value"
+          :compliance-stats="store.complianceStats.value"
+          @sync-now="handleSyncNow"
+        />
+      </main>
+
+      <BottomNav :active-tab="activeTab" @change-tab="activeTab = $event" />
+
+      <AlarmPopupModal
+        v-if="reminder.activeAlert.value"
+        :alert="reminder.activeAlert.value"
+        :is-syncing="store.isSyncingPortal.value"
+        @dismiss="reminder.dismissAlert()"
+        @sync-now="handleSyncNow"
+        @open-portal="handleOpenPortal"
+      />
+
+      <PortalConnectModal
+        v-if="isConnectPortalOpen"
+        :profile="store.profile.value"
+        :is-syncing="store.isSyncingPortal.value"
+        @close="isConnectPortalOpen = false"
+        @open-portal-in-app="handleOpenPortal"
+        @sync-now="handleSyncNow"
+        @connect-token="handleConnectToken"
+        @disconnect="handleDisconnectPortal"
+      />
+
+      <NotificationsModal
+        v-if="isNotificationsOpen"
+        :notifications="store.notifications.value"
+        @close="isNotificationsOpen = false"
+        @mark-all-read="store.markAllNotificationsRead()"
+      />
+
+      <ProfileModal
+        v-if="isProfileOpen"
+        :profile="store.profile.value"
+        :is-session-expired="store.isSessionExpired.value"
+        :is-syncing="store.isSyncingPortal.value"
+        @close="isProfileOpen = false"
+        @sync-now="handleSyncNow"
+        @open-connect-modal="
+          () => {
+            isProfileOpen = false
+            isConnectPortalOpen = true
+          }
+        "
+        @disconnect="handleDisconnectPortal"
+      />
+    </template>
+
+    <!-- Floating Toast Feedback -->
+    <div
+      v-if="toastMessage"
+      role="status"
+      class="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-inverse-surface text-inverse-on-surface px-4 py-2.5 rounded-full shadow-lg font-label-md text-label-md max-w-[90vw] text-center"
+    >
+      {{ toastMessage }}
+    </div>
+  </div>
+</template>
