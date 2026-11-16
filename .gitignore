@@ -1,8 +1,8 @@
-node_modules
-dist
-dist-ssr
-android
-ios
+/node_modules
+/dist
+/dist-ssr
+/android
+/ios
 *.local
 .DS_Store
 .env

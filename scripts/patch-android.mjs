@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const root = process.cwd()
@@ -409,3 +409,63 @@ if (existsSync(variablesGradlePath)) {
   writeFileSync(variablesGradlePath, updatedVars, 'utf-8')
   console.log('Updated minSdkVersion = 26 in android/variables.gradle')
 }
+
+// 6. Replace default Capacitor launcher icons & splash with custom MagangHub Reminder branding
+const resDir = resolve(root, 'android/app/src/main/res')
+const customAssetsDir = resolve(root, 'resources/android')
+const densities = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']
+
+for (const density of densities) {
+  const srcMipmap = resolve(customAssetsDir, `mipmap-${density}`)
+  const dstMipmap = resolve(resDir, `mipmap-${density}`)
+  if (!existsSync(srcMipmap)) continue
+  mkdirSync(dstMipmap, { recursive: true })
+  for (const file of ['ic_launcher.png', 'ic_launcher_round.png', 'ic_launcher_foreground.png']) {
+    const srcFile = resolve(srcMipmap, file)
+    if (existsSync(srcFile)) {
+      copyFileSync(srcFile, resolve(dstMipmap, file))
+    }
+  }
+}
+
+const icBgXmlPath = resolve(resDir, 'values/ic_launcher_background.xml')
+writeFileSync(
+  icBgXmlPath,
+  `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#002242</color>\n</resources>\n`,
+  'utf-8'
+)
+
+// Clean default Capacitor splash.png variants and install centered vector-safe splash.xml
+const splashDirs = [
+  'drawable',
+  'drawable-land-hdpi',
+  'drawable-land-mdpi',
+  'drawable-land-xhdpi',
+  'drawable-land-xxhdpi',
+  'drawable-land-xxxhdpi',
+  'drawable-port-hdpi',
+  'drawable-port-mdpi',
+  'drawable-port-xhdpi',
+  'drawable-port-xxhdpi',
+  'drawable-port-xxxhdpi'
+]
+for (const dir of splashDirs) {
+  const sp = resolve(resDir, dir, 'splash.png')
+  if (existsSync(sp)) {
+    rmSync(sp)
+  }
+}
+
+const splashLogoSrc = resolve(customAssetsDir, 'splash_logo.png')
+if (existsSync(splashLogoSrc)) {
+  const nodpiDir = resolve(resDir, 'drawable-nodpi')
+  mkdirSync(nodpiDir, { recursive: true })
+  copyFileSync(splashLogoSrc, resolve(nodpiDir, 'splash_logo.png'))
+
+  writeFileSync(
+    resolve(resDir, 'drawable/splash.xml'),
+    `<?xml version="1.0" encoding="utf-8"?>\n<layer-list xmlns:android="http://schemas.android.com/apk/res/android">\n    <item android:drawable="@color/ic_launcher_background" />\n    <item>\n        <bitmap\n            android:gravity="center"\n            android:src="@drawable/splash_logo" />\n    </item>\n</layer-list>\n`,
+    'utf-8'
+  )
+}
+console.log('Applied custom MagangHub Reminder launcher icons and splash screen')

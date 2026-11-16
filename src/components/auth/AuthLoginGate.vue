@@ -58,15 +58,15 @@ function submitToken() {
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
           >
-            <circle cx="12" cy="12" r="8.5" stroke="#8cf2ff" stroke-width="2" />
+            <circle cx="12" cy="12" r="8" stroke="#8cf2ff" stroke-width="2" />
             <path
-              d="M12 7.5V12.2L15.2 14"
+              d="M12 7.5V12L14.8 15.6"
               stroke="#ffffff"
               stroke-width="2"
               stroke-linecap="round"
               stroke-linejoin="round"
             />
-            <circle cx="17.5" cy="6.5" r="2.5" fill="#00b592" />
+            <circle cx="17.5" cy="6.5" r="2.4" fill="#00b592" />
           </svg>
         </div>
         <div>
