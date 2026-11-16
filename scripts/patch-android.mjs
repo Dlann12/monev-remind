@@ -372,3 +372,15 @@ const alarmIconXml = `<vector xmlns:android="http://schemas.android.com/apk/res/
 `
 writeFileSync(resolve(drawableDir, 'ic_stat_alarm.xml'), alarmIconXml, 'utf-8')
 console.log('Generated res/drawable/ic_stat_alarm.xml')
+
+// 5. Bump minSdkVersion to 26 (required by @capacitor/inappbrowser / ioninappbrowser-android)
+const variablesGradlePath = resolve(root, 'android/variables.gradle')
+if (existsSync(variablesGradlePath)) {
+  const varsContent = readFileSync(variablesGradlePath, 'utf-8')
+  const updatedVars = varsContent.replace(
+    /minSdkVersion\s*=\s*\d+/,
+    'minSdkVersion = 26'
+  )
+  writeFileSync(variablesGradlePath, updatedVars, 'utf-8')
+  console.log('Updated minSdkVersion = 26 in android/variables.gradle')
+}
