@@ -35,6 +35,7 @@ import {
   isSessionLikelyExpired,
   isWorkdayActive,
   shouldTriggerCatchUp,
+  syncAlarmRuleDisplay,
   toLocalDateKey
 } from '@/utils/dateTime'
 
@@ -153,7 +154,11 @@ export function useMagangStore() {
 
     if (p) profile.value = { ...DEFAULT_PROFILE, ...p }
     if (s) schedule.value = { ...DEFAULT_SCHEDULE, ...s }
-    alarms.value = al.length > 0 ? al : [...DEFAULT_ALARMS]
+    const tz = schedule.value.timezone
+    const baseAlarms = al.length > 0 ? al : [...DEFAULT_ALARMS]
+    alarms.value = baseAlarms.map((alarm) =>
+      syncAlarmRuleDisplay(alarm, alarm.time, tz)
+    )
     records.value = rec
     notifications.value = notif
   }
@@ -180,16 +185,12 @@ export function useMagangStore() {
   }
 
   async function updateAlarmTime(alarmId: string, time: string): Promise<void> {
+    if (!time) return
     const target = alarms.value.find((a) => a.id === alarmId)
     if (!target) return
-    const tz = schedule.value.timezone
-    const suffix = target.subtitle.includes('•')
-      ? target.subtitle.split('•').slice(1).join('•').trim()
-      : 'Pengingat aktif'
     const updated: AlarmRule = {
-      ...target,
-      time,
-      subtitle: `Pukul ${time} ${tz} • ${suffix}`
+      ...syncAlarmRuleDisplay(target, time, schedule.value.timezone),
+      lastTriggeredDate: target.time !== time ? undefined : target.lastTriggeredDate
     }
     await db.alarms.put(updated).catch(() => {})
     alarms.value = alarms.value.map((a) => (a.id === alarmId ? updated : a))
@@ -284,11 +285,12 @@ export function useMagangStore() {
             isHolidayOverride: false
           })
         }
+        const autoTime = schedule.value.autoFillTime || '23:00'
         if (!wasFilledBefore) {
           await syncAlarmsToDevice()
           await addNotification({
             title: nativeAutoFilledToday
-              ? 'Auto-Isi Monev 23:00 Berhasil'
+              ? `Auto-Isi Monev ${autoTime} Berhasil`
               : 'Auto-Sync: Monev Hari Ini Terisi',
             body: nativeAutoFilledToday
               ? `Monev hari ini diisi otomatis mengikuti catatan kegiatan ${result.lastAutoCopiedFromDate || 'kemarin'}.`
@@ -362,12 +364,13 @@ export function useMagangStore() {
   }
 
   async function runAutoFill2300(): Promise<AutoFillMonevResult> {
+    const autoTime = schedule.value.autoFillTime || '23:00'
     if (isAutoFilling.value) {
       return {
         outcome: 'unavailable',
         submittedDate: todayKey.value,
         copiedFromDate: '',
-        message: 'Auto-isi 23:00 sedang berjalan...'
+        message: `Auto-isi ${autoTime} sedang berjalan...`
       }
     }
 
@@ -399,7 +402,7 @@ export function useMagangStore() {
         })
         await syncAlarmsToDevice()
 
-        const title = 'Auto-Isi Monev 23:00 Berhasil'
+        const title = `Auto-Isi Monev ${autoTime} Berhasil`
         const body = res.copiedFromDate
           ? `Monev hari ini otomatis terisi mengikuti kegiatan tanggal ${res.copiedFromDate}.`
           : 'Monev hari ini otomatis terisi mengikuti kegiatan sebelumnya.'
@@ -418,13 +421,13 @@ export function useMagangStore() {
           portalAccessToken: ''
         })
         await addNotification({
-          title: 'Auto-Isi Monev 23:00 Gagal (Sesi Habis)',
+          title: `Auto-Isi Monev ${autoTime} Gagal (Sesi Habis)`,
           body: 'Silakan login ulang ke MagangHub agar auto-isi aktif kembali.',
           type: 'session_expired'
         })
       } else if (res.outcome === 'no_previous_log') {
         await addNotification({
-          title: 'Auto-Isi Monev 23:00 Dilewati',
+          title: `Auto-Isi Monev ${autoTime} Dilewati`,
           body: res.message,
           type: 'auto_fill'
         })
@@ -499,19 +502,24 @@ export function useMagangStore() {
     await db.schedule.put(next).catch(() => {})
     schedule.value = next
 
-    if (patch.monevCheckTime) {
-      const primary = alarms.value.find((a) => a.kind === 'primary')
-      if (primary && primary.time !== patch.monevCheckTime) {
-        const updated: AlarmRule = {
-          ...primary,
-          time: patch.monevCheckTime,
-          subtitle: `Pukul ${patch.monevCheckTime} ${next.timezone} • Pengingat pengisian absen Monev harian`
+    if (patch.monevCheckTime || patch.timezone) {
+      const updatedAlarms = alarms.value.map((alarm) => {
+        if (alarm.kind === 'primary' && patch.monevCheckTime) {
+          return {
+            ...syncAlarmRuleDisplay(alarm, patch.monevCheckTime, next.timezone),
+            lastTriggeredDate:
+              alarm.time !== patch.monevCheckTime
+                ? undefined
+                : alarm.lastTriggeredDate
+          }
         }
-        await db.alarms.put(updated).catch(() => {})
-        alarms.value = alarms.value.map((a) =>
-          a.id === primary.id ? updated : a
-        )
-      }
+        if (patch.timezone) {
+          return syncAlarmRuleDisplay(alarm, alarm.time, next.timezone)
+        }
+        return alarm
+      })
+      await db.alarms.bulkPut(updatedAlarms).catch(() => {})
+      alarms.value = updatedAlarms
     }
 
     await syncAlarmsToDevice()

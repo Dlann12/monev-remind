@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SCHEDULE } from '@/db/database'
+import { DEFAULT_ALARMS, DEFAULT_SCHEDULE } from '@/db/database'
 import type { MonevRecord } from '@/types/app'
 import {
   formatCountdown,
@@ -7,7 +7,8 @@ import {
   isSessionLikelyExpired,
   isWorkdayActive,
   shouldTriggerAutoFill2300,
-  shouldTriggerCatchUp
+  shouldTriggerCatchUp,
+  syncAlarmRuleDisplay
 } from '@/utils/dateTime'
 import {
   buildCompleteMonevHistory,
@@ -118,6 +119,22 @@ describe('Workday, holiday, 17:00 catch-up, and 23:00 auto-fill logic', () => {
     expect(isSessionLikelyExpired(null, 12, now)).toBe(true)
     expect(isSessionLikelyExpired(fresh, 12, now)).toBe(false)
     expect(isSessionLikelyExpired(stale, 12, now)).toBe(true)
+  })
+
+  it('synchronizes alarm title and subtitle when time or timezone changes', () => {
+    const primary = syncAlarmRuleDisplay(DEFAULT_ALARMS[0]!, '16:15', 'WITA')
+    expect(primary.time).toBe('16:15')
+    expect(primary.title).toBe('Alarm Utama Monev (16:15)')
+    expect(primary.subtitle).toBe(
+      'Pukul 16:15 WITA • Pengingat pengisian absen Monev harian'
+    )
+
+    const snooze = syncAlarmRuleDisplay(DEFAULT_ALARMS[1]!, '19:45', 'WIT')
+    expect(snooze.time).toBe('19:45')
+    expect(snooze.title).toBe('Pengingat Ulang / Snooze #1')
+    expect(snooze.subtitle).toBe(
+      'Pukul 19:45 WIT • Muncul jika Monev belum diisi'
+    )
   })
 })
 

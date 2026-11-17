@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type {
   AlarmRule,
   AppTab,
@@ -49,8 +50,18 @@ interface Emits {
   navigateTab: [tab: AppTab]
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+
+const targetTimeLabel = computed(() => {
+  const times = props.alarms
+    .filter((a) => a.enabled)
+    .map((a) => a.time)
+    .filter(Boolean)
+    .sort()
+  const latest = times[times.length - 1] || props.schedule.monevCheckTime
+  return `${latest} ${props.schedule.timezone}`
+})
 </script>
 
 <template>
@@ -92,6 +103,7 @@ const emit = defineEmits<Emits>()
 
     <SmartAlarmsCard
       :alarms="alarms"
+      :schedule="schedule"
       :active-alarms-count="activeAlarmsCount"
       @toggle-alarm="emit('toggleAlarm', $event)"
       @test-alarm="emit('testAlarm')"
@@ -100,6 +112,7 @@ const emit = defineEmits<Emits>()
 
     <ComplianceSummaryCard
       :stats="complianceStats"
+      :target-time-label="targetTimeLabel"
       @open-history="emit('navigateTab', 'riwayat')"
     />
   </div>

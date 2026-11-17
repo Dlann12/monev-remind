@@ -161,6 +161,7 @@ async function handleTestAlarm() {
           v-else-if="activeTab === 'riwayat'"
           :records="store.records.value"
           :is-syncing="store.isSyncingPortal.value"
+          :auto-fill-time="store.schedule.value.autoFillTime"
           :compliance-stats="store.complianceStats.value"
           @sync-now="handleSyncNow"
         />

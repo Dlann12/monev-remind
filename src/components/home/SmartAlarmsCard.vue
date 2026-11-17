@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import type { AlarmRule } from '@/types/app'
+import type { AlarmRule, ScheduleConfig } from '@/types/app'
 
 interface Props {
   alarms: ReadonlyArray<AlarmRule>
+  schedule: ScheduleConfig
   activeAlarmsCount: number
 }
 
@@ -32,7 +33,7 @@ const emit = defineEmits<Emits>()
             Alarm &amp; Pengingat Otomatis
           </h3>
           <p class="font-body-sm text-body-sm text-on-surface-variant">
-            Berbunyi jika Monev belum diisi hingga 17:00
+            Berbunyi jika Monev belum diisi hingga {{ schedule.monevCheckTime }} {{ schedule.timezone }}
           </p>
         </div>
       </div>

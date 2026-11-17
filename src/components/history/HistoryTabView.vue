@@ -6,6 +6,7 @@ import { formatIndonesianDate } from '@/utils/dateTime'
 interface Props {
   records: ReadonlyArray<MonevRecord>
   isSyncing: boolean
+  autoFillTime?: string
   complianceStats: {
     filled: number
     onLeave: number
@@ -273,7 +274,7 @@ function statusBadgeClass(status: MonevRecord['status']): string {
               v-if="rec.isAutoFilled"
               class="px-1.5 py-0.5 rounded bg-secondary-fixed/40 text-on-secondary-fixed font-label-sm text-label-sm"
             >
-              Auto 23:00
+              Auto {{ autoFillTime || '23:00' }}
             </span>
           </div>
 

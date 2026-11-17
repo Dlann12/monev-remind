@@ -7,6 +7,7 @@ interface Props {
     total: number
     percentage: number
   }
+  targetTimeLabel?: string
 }
 
 interface Emits {
@@ -25,7 +26,7 @@ const emit = defineEmits<Emits>()
           Kepatuhan Pengisian Monev
         </h3>
         <p class="font-body-sm text-body-sm text-on-surface-variant">
-          Target ketepatan waktu &ge; 95% sebelum 18:00
+          Target ketepatan waktu &ge; 95% sebelum {{ targetTimeLabel || '18:00' }}
         </p>
       </div>
       <span class="font-headline-sm text-headline-sm text-secondary font-bold">

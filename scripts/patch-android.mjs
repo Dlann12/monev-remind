@@ -939,6 +939,10 @@ public class AutoMonevReceiver extends BroadcastReceiver {
             return;
         }
 
+        final int hour = prefs.getInt("auto_fill_hour", 23);
+        final int minute = prefs.getInt("auto_fill_minute", 0);
+        final String timeLabel = String.format(Locale.US, "%02d:%02d", hour, minute);
+
         final PendingResult pendingResult = goAsync();
         EXECUTOR.execute(() -> {
             try {
@@ -948,19 +952,19 @@ public class AutoMonevReceiver extends BroadcastReceiver {
                 if ("submitted".equals(res.state)) {
                     postNotification(
                         context,
-                        "Auto-Isi Monev 23:00 Berhasil",
+                        "Auto-Isi Monev " + timeLabel + " Berhasil",
                         res.message
                     );
                 } else if ("session_expired".equals(res.state)) {
                     postNotification(
                         context,
-                        "Auto-Isi Monev 23:00 Gagal (Sesi Habis)",
+                        "Auto-Isi Monev " + timeLabel + " Gagal (Sesi Habis)",
                         "Login ulang ke MagangHub agar pengisian otomatis aktif kembali."
                     );
                 } else if ("no_previous_log".equals(res.state)) {
                     postNotification(
                         context,
-                        "Auto-Isi Monev 23:00 Dilewati",
+                        "Auto-Isi Monev " + timeLabel + " Dilewati",
                         "Belum ada catatan kegiatan sebelumnya untuk disalin otomatis."
                     );
                 }

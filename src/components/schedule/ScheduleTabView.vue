@@ -69,13 +69,25 @@ function toggleWorkDay(dayId: number) {
 }
 
 function saveMonevCheckTime() {
-  if (!monevCheckTime.value) return
+  if (!/^\d{2}:\d{2}$/.test(monevCheckTime.value)) return
+  if (monevCheckTime.value === props.schedule.monevCheckTime) return
   emit('updateSchedule', { monevCheckTime: monevCheckTime.value })
 }
 
 function saveAutoFillTime() {
-  if (!autoFillTime.value) return
+  if (!/^\d{2}:\d{2}$/.test(autoFillTime.value)) return
+  if (autoFillTime.value === props.schedule.autoFillTime) return
   emit('updateSchedule', { autoFillTime: autoFillTime.value })
+}
+
+function handleAlarmTimeInput(
+  alarmId: string,
+  currentTime: string,
+  event: Event
+) {
+  const nextTime = (event.target as HTMLInputElement).value
+  if (!/^\d{2}:\d{2}$/.test(nextTime) || nextTime === currentTime) return
+  emit('updateAlarmTime', alarmId, nextTime)
 }
 
 function saveTelegramConfig() {
@@ -176,15 +188,15 @@ function saveTelegramConfig() {
       </div>
     </div>
 
-    <!-- Auto-Isi Monev Pukul 23:00 -->
+    <!-- Auto-Isi Monev Otomatis -->
     <div class="bg-surface-container-lowest rounded-xl p-space-md shadow-sm space-y-3">
       <div class="flex items-start justify-between gap-3">
         <div>
           <h3 class="font-title-md text-title-md text-on-surface">
-            Auto-Isi Monev Pukul 23:00
+            Auto-Isi Monev Pukul {{ schedule.autoFillTime || '23:00' }}
           </h3>
           <p class="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
-            Jika hingga pukul {{ autoFillTime }} hari kerja Monev belum diisi, aplikasi otomatis mengirim log harian menyalin kegiatan kemarin.
+            Jika hingga pukul {{ schedule.autoFillTime || '23:00' }} {{ schedule.timezone }} hari kerja Monev belum diisi, aplikasi otomatis mengirim log harian menyalin kegiatan kemarin.
           </p>
         </div>
         <button
@@ -215,6 +227,7 @@ function saveTelegramConfig() {
             v-model="autoFillTime"
             type="time"
             class="bg-transparent font-title-md text-title-md text-on-surface focus:outline-none"
+            @input="saveAutoFillTime"
             @change="saveAutoFillTime"
           />
         </label>
@@ -232,10 +245,10 @@ function saveTelegramConfig() {
     <div class="bg-surface-container-lowest rounded-xl p-space-md shadow-sm space-y-3">
       <div>
         <h3 class="font-title-md text-title-md text-on-surface">
-          Jadwal Pengingat Utama (Default 17:00)
+          Jadwal Pengingat Utama ({{ schedule.monevCheckTime }} {{ schedule.timezone }})
         </h3>
         <p class="font-body-sm text-body-sm text-on-surface-variant">
-          Jika Monev belum diisi sampai jam ini, alarm &amp; notifikasi suara muncul otomatis.
+          Jika Monev belum diisi sampai pukul {{ schedule.monevCheckTime }} {{ schedule.timezone }}, alarm &amp; notifikasi suara muncul otomatis.
         </p>
       </div>
 
@@ -248,6 +261,7 @@ function saveTelegramConfig() {
             v-model="monevCheckTime"
             type="time"
             class="bg-transparent font-title-md text-title-md text-on-surface focus:outline-none"
+            @input="saveMonevCheckTime"
             @change="saveMonevCheckTime"
           />
         </label>
@@ -331,13 +345,8 @@ function saveTelegramConfig() {
             type="time"
             aria-label="Ubah jam alarm"
             class="bg-surface-container-lowest rounded-md px-1.5 py-1 font-label-md text-label-md text-primary w-20 text-center"
-            @change="
-              emit(
-                'updateAlarmTime',
-                alarm.id,
-                ($event.target as HTMLInputElement).value
-              )
-            "
+            @input="handleAlarmTimeInput(alarm.id, alarm.time, $event)"
+            @change="handleAlarmTimeInput(alarm.id, alarm.time, $event)"
           />
 
           <button
@@ -365,7 +374,7 @@ function saveTelegramConfig() {
             Notifikasi Telegram (Opsional)
           </h3>
           <p class="font-body-sm text-body-sm text-on-surface-variant">
-            Tersimpan lokal. Mengirim pesan pengingat ke HP saat online jika pukul 17:00 masih kosong.
+            Tersimpan lokal. Mengirim pesan pengingat ke HP saat online jika pukul {{ schedule.monevCheckTime }} {{ schedule.timezone }} masih kosong.
           </p>
         </div>
         <span

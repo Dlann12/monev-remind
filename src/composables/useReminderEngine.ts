@@ -65,6 +65,7 @@ export function useReminderEngine() {
     }
 
     if (rec.status === 'terisi') {
+      const autoTime = sched.autoFillTime || '23:00'
       return {
         state: 'filled' as const,
         badge: rec.isAutoFilled ? 'Auto-Terisi' : 'Sudah Diisi',
@@ -72,14 +73,15 @@ export function useReminderEngine() {
           ? 'Monev Hari Ini Diisi Otomatis'
           : 'Monev Hari Ini Selesai',
         subtitle: rec.isAutoFilled
-          ? 'Otomatis disalin dari kegiatan sebelumnya pada pukul 23:00.'
+          ? `Otomatis disalin dari kegiatan sebelumnya pada pukul ${autoTime} ${sched.timezone}.`
           : 'Alarm pengingat dan snooze hari ini otomatis dibatalkan.'
       }
     }
 
     if (nowMinutes >= checkMinutes) {
+      const autoTime = sched.autoFillTime || '23:00'
       const autoFillNote = sched.autoFillAt2300
-        ? ` Auto-isi berjalan pukul ${sched.autoFillTime || '23:00'} jika masih kosong.`
+        ? ` Auto-isi berjalan pukul ${autoTime} ${sched.timezone} jika masih kosong.`
         : ''
       return {
         state: 'overdue' as const,
@@ -131,15 +133,16 @@ export function useReminderEngine() {
     if (res.outcome !== 'unavailable') {
       lastAutoFillHandledDate.value = todayKey
     }
+    const autoTime = store.schedule.value.autoFillTime || '23:00'
     if (res.outcome === 'submitted') {
       showAlertBanner({
-        title: 'Auto-Isi Monev 23:00 Berhasil',
+        title: `Auto-Isi Monev ${autoTime} Berhasil`,
         body: res.message,
         isSessionWarning: false
       })
     } else if (res.outcome === 'session_expired') {
       showAlertBanner({
-        title: 'Auto-Isi Monev 23:00 Gagal (Sesi Habis)',
+        title: `Auto-Isi Monev ${autoTime} Gagal (Sesi Habis)`,
         body: res.message,
         isSessionWarning: true
       })

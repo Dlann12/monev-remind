@@ -1,4 +1,9 @@
-import type { MonevRecord, ScheduleConfig } from '@/types/app'
+import type {
+  AlarmRule,
+  MonevRecord,
+  ScheduleConfig,
+  TimezoneLabel
+} from '@/types/app'
 
 const ID_DAYS = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'] as const
 const ID_MONTHS = [
@@ -193,4 +198,29 @@ export function isSessionLikelyExpired(
   if (Number.isNaN(verifiedMs)) return true
   const elapsedHours = (now.getTime() - verifiedMs) / (1000 * 60 * 60)
   return elapsedHours >= timeoutHours
+}
+
+/**
+ * Keeps alarm title and subtitle synchronized with the user's configured time & timezone.
+ */
+export function syncAlarmRuleDisplay(
+  alarm: AlarmRule,
+  time: string,
+  timezone: TimezoneLabel
+): AlarmRule {
+  const suffix = alarm.subtitle.includes('•')
+    ? alarm.subtitle.split('•').slice(1).join('•').trim()
+    : alarm.kind === 'primary'
+      ? 'Pengingat pengisian absen Monev harian'
+      : 'Pengingat ulang jika Monev belum diisi'
+
+  const title =
+    alarm.kind === 'primary' ? `Alarm Utama Monev (${time})` : alarm.title
+
+  return {
+    ...alarm,
+    time,
+    title,
+    subtitle: `Pukul ${time} ${timezone} • ${suffix}`
+  }
 }
