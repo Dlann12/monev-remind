@@ -43,27 +43,11 @@ const statusDotClass = computed(() => {
   >
     <div class="h-16 px-margin flex items-center justify-between max-w-lg mx-auto">
       <div class="flex items-center gap-space-sm">
-        <div
-          class="h-8 w-8 rounded-lg bg-primary flex items-center justify-center shadow-sm flex-shrink-0"
-          aria-hidden="true"
-        >
-          <svg
-            class="w-5 h-5"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <circle cx="12" cy="12" r="8" stroke="#8cf2ff" stroke-width="2" />
-            <path
-              d="M12 7.5V12L14.8 15.6"
-              stroke="#ffffff"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <circle cx="17.5" cy="6.5" r="2.4" fill="#00b592" />
-          </svg>
-        </div>
+        <img
+          :src="'./app-logo.png'"
+          alt="Logo MagangHub"
+          class="h-8 w-8 rounded-lg shadow-sm object-cover flex-shrink-0"
+        />
 
         <div class="flex flex-col">
           <div class="flex items-center gap-space-xs">

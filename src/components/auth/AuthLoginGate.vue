@@ -48,27 +48,11 @@ function submitToken() {
     <div class="space-y-space-md">
       <!-- Brand Header -->
       <div class="flex items-center gap-space-sm pt-2">
-        <div
-          class="h-10 w-10 rounded-xl bg-primary flex items-center justify-center shadow-sm flex-shrink-0"
-          aria-hidden="true"
-        >
-          <svg
-            class="w-6 h-6"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <circle cx="12" cy="12" r="8" stroke="#8cf2ff" stroke-width="2" />
-            <path
-              d="M12 7.5V12L14.8 15.6"
-              stroke="#ffffff"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <circle cx="17.5" cy="6.5" r="2.4" fill="#00b592" />
-          </svg>
-        </div>
+        <img
+          :src="'./app-logo.png'"
+          alt="Logo MagangHub"
+          class="h-10 w-10 rounded-xl shadow-sm object-cover flex-shrink-0"
+        />
         <div>
           <div class="flex items-center gap-1.5">
             <span class="font-headline-sm text-headline-sm text-primary">

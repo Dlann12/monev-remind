@@ -1177,7 +1177,7 @@ for (const density of densities) {
 const icBgXmlPath = resolve(resDir, 'values/ic_launcher_background.xml')
 writeFileSync(
   icBgXmlPath,
-  `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#002242</color>\n</resources>\n`,
+  `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#0267FF</color>\n</resources>\n`,
   'utf-8'
 )
 
