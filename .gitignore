@@ -6,4 +6,5 @@
 *.local
 .DS_Store
 .env
+promo/
 

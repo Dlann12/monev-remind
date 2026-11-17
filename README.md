@@ -2,6 +2,18 @@
 
 Aplikasi Android dan Web berbasis **Vue 3 + TypeScript + Tailwind CSS + Dexie.js + Capacitor** yang terhubung langsung dengan portal **`monev.maganghub.kemnaker.go.id`** untuk memantau status kehadiran harian peserta magang, membunyikan pengingat suara kustom, mencatat riwayat kehadiran lengkap, serta mengisi Monev otomatis pada pukul **23:00** (atau jam sesuai pengaturan) jika masih kosong.
 
+## Unduh & Pasang APK (Android 8.0+)
+
+Tidak perlu login GitHub atau kompilasi ulang untuk mencoba aplikasinya di HP Android:
+
+- **Download Langsung `.apk` Terbaru:** [Unduh MagangHub-Reminder.apk](https://github.com/Dlann12/monev-remind/releases/latest/download/MagangHub-Reminder.apk)
+- **Halaman Rilis:** [GitHub Releases (`latest`)](https://github.com/Dlann12/monev-remind/releases/latest)
+
+**Cara pemasangan di HP Android:**
+1. Unduh file `MagangHub-Reminder.apk` dari tautan di atas.
+2. Buka file APK tersebut; bila Android meminta izin instalasi dari sumber tidak dikenal (atau Play Protect menanyakan konfirmasi), pilih **Izinkan** / **Tetap instal**.
+3. Buka aplikasi lalu masuk memakai akun **SIAPkerja / MagangHub** milik Anda sendiri (data sesi tersimpan lokal 100% di HP Anda).
+
 ---
 
 ## Fitur Utama
@@ -140,9 +152,8 @@ npm run dev
 
 Build APK berjalan otomatis melalui GitHub Actions (`.github/workflows/build-android.yml`) tanpa memerlukan Android Studio di laptop:
 
-1. Push perubahan ke branch `main` (atau jalankan manual melalui menu **Actions → Build Android APK (Capacitor) → Run workflow**).
-2. Setelah workflow selesai (`success`), buka halaman run tersebut dan unduh artefak **`maganghub-reminder-debug-apk`**.
-3. Ekstrak file ZIP lalu instal `app-debug.apk` di perangkat Android (Android 8.0 / API 26 ke atas).
+1. Setiap push ke branch `main` (atau tag `v*`) otomatis menjalankan unit test, Vite build, patch native Android, dan kompilasi `./gradlew assembleDebug`.
+2. Hasil kompilasi otomatis dipublikasikan ke **GitHub Releases** sebagai **`MagangHub-Reminder.apk`** (siap diunduh publik 1-klik tanpa login GitHub) serta diunggah ke tab **Actions** sebagai artefak **`maganghub-reminder-debug-apk`**.
 
 ### Catatan Penggunaan di Perangkat Android
 - **Izin Latar Belakang**: Agar alarm pengingat dan **Auto-Isi 23:00** berjalan tepat waktu saat layar mati atau aplikasi tertutup, izinkan **Notifikasi**, **Alarm & Pengingat**, serta atur penggunaan baterai aplikasi ke **Tidak dibatasi (*Unrestricted*)** di pengaturan Android.

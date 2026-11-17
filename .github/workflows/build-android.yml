@@ -3,9 +3,13 @@ name: Build Android APK (Capacitor)
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-apk:
@@ -50,10 +54,34 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
+      - name: Prepare APK for Release & Artifact
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk MagangHub-Reminder.apk
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: maganghub-reminder-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: MagangHub-Reminder.apk
           retention-days: 14
 
+      - name: Publish APK to GitHub Release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v1.0.0"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          fi
+          SHORT_SHA="${GITHUB_SHA::7}"
+          NOTES="Build Android APK otomatis (commit \`${SHORT_SHA}\`). Langsung unduh **MagangHub-Reminder.apk** di bawah ini untuk dipasang pada perangkat Android 8.0+."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" MagangHub-Reminder.apk --clobber
+            gh release edit "$TAG" --target "${GITHUB_SHA}" --title "MagangHub Reminder ${TAG}" --notes "$NOTES" --latest
+          else
+            gh release create "$TAG" MagangHub-Reminder.apk \
+              --target "${GITHUB_SHA}" \
+              --title "MagangHub Reminder ${TAG}" \
+              --notes "$NOTES" \
+              --latest
+          fi
