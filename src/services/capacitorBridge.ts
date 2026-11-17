@@ -4,14 +4,41 @@ import { App } from '@capacitor/app'
 import type { AlarmRule, ScheduleConfig } from '@/types/app'
 import { playReminderChime } from '@/utils/audio'
 
+export const MONEV_NOTIFICATION_CHANNEL_ID = 'monev_voice_alarm_v1'
+export const MONEV_CUSTOM_SOUND_FILE = 'reminder_sound.mp3'
+
+let channelInitialized = false
+
 export function isNativePlatform(): boolean {
   return Capacitor.isNativePlatform()
+}
+
+export async function ensureNotificationChannel(): Promise<void> {
+  if (!isNativePlatform() || channelInitialized) return
+
+  try {
+    await LocalNotifications.createChannel({
+      id: MONEV_NOTIFICATION_CHANNEL_ID,
+      name: 'Pengingat Suara Monev',
+      description: 'Notifikasi suara pengingat dan auto-isi Monev MagangHub',
+      sound: MONEV_CUSTOM_SOUND_FILE,
+      importance: 5,
+      visibility: 1,
+      vibration: true,
+      lights: true,
+      lightColor: '#006972'
+    })
+    channelInitialized = true
+  } catch {
+    // Ignore channel setup errors on non-Android platforms
+  }
 }
 
 export async function requestNotificationPermission(): Promise<boolean> {
   if (isNativePlatform()) {
     try {
       const perm = await LocalNotifications.requestPermissions()
+      await ensureNotificationChannel()
       return perm.display === 'granted'
     } catch {
       return false
@@ -36,12 +63,15 @@ export async function triggerImmediateAlert(
 
   if (isNativePlatform()) {
     try {
+      await ensureNotificationChannel()
       await LocalNotifications.schedule({
         notifications: [
           {
             id: Math.floor(Date.now() % 2147483647),
             title,
             body,
+            channelId: MONEV_NOTIFICATION_CHANNEL_ID,
+            sound: MONEV_CUSTOM_SOUND_FILE,
             schedule: { at: new Date(Date.now() + 400) },
             smallIcon: 'ic_stat_alarm'
           }
@@ -88,6 +118,8 @@ export async function syncNativeAlarms(
     const perm = await LocalNotifications.checkPermissions()
     if (perm.display !== 'granted') return
 
+    await ensureNotificationChannel()
+
     const notifications = alarms
       .filter((a) => a.enabled)
       .filter((a) => !(a.kind === 'snooze' && (todayFilled || !schedule.snoozeEnabled)))
@@ -99,7 +131,10 @@ export async function syncNativeAlarms(
         return {
           id: 100 + index,
           title: alarm.title,
-          body: 'Monev MagangHub hari ini belum ditandai terisi. Buka portal sekarang!',
+          body: 'Monev MagangHub hari ini belum diisi. Jangan lupa isi monev sekarang!',
+          channelId: MONEV_NOTIFICATION_CHANNEL_ID,
+          sound: MONEV_CUSTOM_SOUND_FILE,
+          smallIcon: 'ic_stat_alarm',
           schedule: {
             on: { hour, minute },
             repeats: true,

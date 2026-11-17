@@ -39,6 +39,9 @@ export interface ScheduleConfig {
   snoozeEnabled: boolean
   timezone: TimezoneLabel
   syncNationalHolidays: boolean
+  autoFillAt2300: boolean
+  autoFillTime: string // Default '23:00'
+  lastAutoFilledDate?: string
 }
 
 export interface AlarmRule {
@@ -58,6 +61,13 @@ export interface MonevRecord {
   status: MonevDayStatus
   filledAt: string | null // ISO timestamp
   approvalStatus?: string
+  dailyLogState?: string
+  activityLog?: string
+  lessonLearned?: string
+  obstacles?: string
+  leaveReason?: string
+  holidayName?: string
+  isAutoFilled?: boolean
   isHolidayOverride: boolean
 }
 
@@ -66,6 +76,6 @@ export interface NotificationLog {
   createdAt: string // ISO string
   title: string
   body: string
-  type: 'alarm' | 'catch_up' | 'session_expired' | 'info'
+  type: 'alarm' | 'catch_up' | 'session_expired' | 'auto_fill' | 'info'
   read: boolean
 }

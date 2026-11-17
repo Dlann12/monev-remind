@@ -6,15 +6,19 @@ import {
   getCountdownSeconds,
   isSessionLikelyExpired,
   isWorkdayActive,
+  shouldTriggerAutoFill2300,
   shouldTriggerCatchUp
 } from '@/utils/dateTime'
 import {
+  buildCompleteMonevHistory,
+  findLatestDailyLogPayload,
+  mapOffDaysToWorkDays,
   parseMonevAttendancesPayload,
   parseMonevHomePayload,
   parseMonevUserPayload
 } from '@/services/monevPortalService'
 
-describe('Workday, holiday, and 17:00 catch-up reminder logic', () => {
+describe('Workday, holiday, 17:00 catch-up, and 23:00 auto-fill logic', () => {
   it('marks Monday-Friday as active workdays when not a holiday', () => {
     const monday = new Date('2026-11-16T10:00:00')
     const sunday = new Date('2026-11-15T10:00:00')
@@ -61,6 +65,51 @@ describe('Workday, holiday, and 17:00 catch-up reminder logic', () => {
     expect(shouldTriggerCatchUp(afterFive, DEFAULT_SCHEDULE, filled)).toBe(false)
   })
 
+  it('triggers 23:00 auto-fill on unfilled active workdays at/after 23:00 only once', () => {
+    const at2259 = new Date('2026-11-16T22:59:00')
+    const at2300 = new Date('2026-11-16T23:00:00')
+    const sundayAt2300 = new Date('2026-11-15T23:00:00')
+
+    const unfilled: MonevRecord = {
+      date: '2026-11-16',
+      status: 'belum',
+      filledAt: null,
+      isHolidayOverride: false
+    }
+    const filled: MonevRecord = {
+      date: '2026-11-16',
+      status: 'terisi',
+      filledAt: '2026-11-16T17:00:00.000Z',
+      isHolidayOverride: false
+    }
+    const onLeave: MonevRecord = {
+      date: '2026-11-16',
+      status: 'izin',
+      filledAt: null,
+      isHolidayOverride: false
+    }
+
+    expect(shouldTriggerAutoFill2300(at2259, DEFAULT_SCHEDULE, unfilled)).toBe(false)
+    expect(shouldTriggerAutoFill2300(at2300, DEFAULT_SCHEDULE, unfilled)).toBe(true)
+    expect(shouldTriggerAutoFill2300(at2300, DEFAULT_SCHEDULE, filled)).toBe(false)
+    expect(shouldTriggerAutoFill2300(at2300, DEFAULT_SCHEDULE, onLeave)).toBe(false)
+    expect(shouldTriggerAutoFill2300(sundayAt2300, DEFAULT_SCHEDULE, unfilled)).toBe(false)
+    expect(
+      shouldTriggerAutoFill2300(
+        at2300,
+        { ...DEFAULT_SCHEDULE, autoFillAt2300: false },
+        unfilled
+      )
+    ).toBe(false)
+    expect(
+      shouldTriggerAutoFill2300(
+        at2300,
+        { ...DEFAULT_SCHEDULE, lastAutoFilledDate: '2026-11-16' },
+        unfilled
+      )
+    ).toBe(false)
+  })
+
   it('detects likely expired portal session (FR-04)', () => {
     const now = new Date('2026-11-16T17:00:00.000Z')
     const fresh = new Date('2026-11-16T15:00:00.000Z').toISOString()
@@ -81,7 +130,7 @@ describe('17:00 Countdown helper', () => {
   })
 })
 
-describe('Monev /users/me/home API parser', () => {
+describe('Monev API parsers, complete history, and daily-log copy helpers', () => {
   it('detects filled, unfilled, and off-day states from Kemnaker API shape', () => {
     expect(
       parseMonevHomePayload({
@@ -108,7 +157,7 @@ describe('Monev /users/me/home API parser', () => {
     ).toBe('off_day')
   })
 
-  it('parses /users/me profile data from Monev MagangHub response', () => {
+  it('parses /users/me profile data including off_days and location codes', () => {
     const parsed = parseMonevUserPayload({
       data: {
         id: 'usr-123',
@@ -118,7 +167,10 @@ describe('Monev /users/me/home API parser', () => {
         internship_position: 'Data Analyst Intern',
         photo_url: 'https://cdn.kemnaker.go.id/avatar.jpg',
         internship_start_date: '2026-09-01',
-        internship_end_date: '2027-02-28'
+        internship_end_date: '2027-02-28',
+        internship_location_province_code: '32',
+        internship_location_regency_code: '3273',
+        off_days: ['SUNDAY']
       }
     })
 
@@ -131,8 +183,12 @@ describe('Monev /users/me/home API parser', () => {
       batch: 'Periode 1 Sep 2026 – 28 Feb 2027',
       photoUrl: 'https://cdn.kemnaker.go.id/avatar.jpg',
       startDate: '2026-09-01',
-      endDate: '2027-02-28'
+      endDate: '2027-02-28',
+      provinceCode: '32',
+      regencyCode: '3273',
+      offDays: ['SUNDAY']
     })
+    expect(mapOffDaysToWorkDays(['SUNDAY'])).toEqual([1, 2, 3, 4, 5, 6])
   })
 
   it('parses /attendances history records from Monev MagangHub API', () => {
@@ -151,5 +207,87 @@ describe('Monev /users/me/home API parser', () => {
       ['2026-11-13', 'terlewat', ''],
       ['2026-11-12', 'izin', 'SUBMITTED']
     ])
+  })
+
+  it('builds complete daily history including PRESENT, ON_LEAVE, ABSENT, regional/national holidays, weekends, and unfilled days', () => {
+    const complete = buildCompleteMonevHistory({
+      startDate: '2026-11-11',
+      endDate: '2027-02-28',
+      todayKey: '2026-11-17',
+      provinceCode: '32',
+      regencyCode: '3273',
+      offDays: ['SATURDAY', 'SUNDAY'],
+      attendances: [
+        { date: '2026-11-11', status: 'ABSENT' },
+        { date: '2026-11-12', status: 'ON_LEAVE', leave_reason: 'Sakit demam', approval_status: 'APPROVED' },
+        { date: '2026-11-16', status: 'PRESENT', approval_status: 'SUBMITTED' }
+      ],
+      dailyLogs: [
+        {
+          date: '2026-11-16',
+          activity_log: 'Mengerjakan integrasi API dashboard magang beserta unit test',
+          lesson_learned: 'Memahami alur autentikasi SSO dan sinkronisasi data',
+          obstacles: 'Tidak ada kendala berarti',
+          state: 'SUBMITTED'
+        }
+      ],
+      holidays: [
+        { date: '2026-11-13', name: 'Cuti Bersama Provinsi', scope: 'PROVINCE', province_code: '32' },
+        { date: '2026-11-17', name: 'Libur Daerah Lain', scope: 'REGENCY', regency_code: '9999' }
+      ]
+    })
+
+    expect(
+      complete.map((r) => ({
+        date: r.date,
+        status: r.status,
+        holidayName: r.holidayName,
+        leaveReason: r.leaveReason,
+        activityLog: r.activityLog
+      }))
+    ).toEqual([
+      { date: '2026-11-17', status: 'belum', holidayName: undefined, leaveReason: undefined, activityLog: undefined },
+      {
+        date: '2026-11-16',
+        status: 'terisi',
+        holidayName: undefined,
+        leaveReason: '',
+        activityLog: 'Mengerjakan integrasi API dashboard magang beserta unit test'
+      },
+      { date: '2026-11-15', status: 'libur', holidayName: 'Akhir Pekan / Hari Libur', leaveReason: undefined, activityLog: undefined },
+      { date: '2026-11-14', status: 'libur', holidayName: 'Akhir Pekan / Hari Libur', leaveReason: undefined, activityLog: undefined },
+      { date: '2026-11-13', status: 'libur', holidayName: 'Cuti Bersama Provinsi', leaveReason: undefined, activityLog: undefined },
+      { date: '2026-11-12', status: 'izin', holidayName: undefined, leaveReason: 'Sakit demam', activityLog: '' },
+      { date: '2026-11-11', status: 'terlewat', holidayName: undefined, leaveReason: '', activityLog: '' }
+    ])
+  })
+
+  it('finds most recent prior daily-log draft for 23:00 auto-fill copy', () => {
+    const draft = findLatestDailyLogPayload(
+      [
+        { date: '2026-11-17', activity_log: 'Should ignore today' },
+        { date: '2026-11-15', activity_log: '   ' },
+        {
+          date: '2026-11-13',
+          activity_log: 'Membantu tim frontend memperbaiki komponen tabel laporan',
+          lesson_learned: 'Belajar state management Vue 3',
+          obstacles: 'Perlu penyesuaian styling mobile'
+        },
+        {
+          date: '2026-11-16',
+          activity_log: 'Melakukan testing end-to-end dan dokumentasi API Kemnaker',
+          lesson_learned: 'Memahami validasi form Monev',
+          obstacles: 'Tidak ada kendala'
+        }
+      ],
+      '2026-11-17'
+    )
+
+    expect(draft).toEqual({
+      sourceDate: '2026-11-16',
+      activity_log: 'Melakukan testing end-to-end dan dokumentasi API Kemnaker',
+      lesson_learned: 'Memahami validasi form Monev',
+      obstacles: 'Tidak ada kendala'
+    })
   })
 })

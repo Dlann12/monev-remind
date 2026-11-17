@@ -10,6 +10,7 @@ import {
   formatTimeHHMM,
   getCountdownSeconds,
   parseTimeToMinutes,
+  shouldTriggerAutoFill2300,
   toLocalDateKey
 } from '@/utils/dateTime'
 import { useMagangStore } from './useMagangStore'
@@ -22,12 +23,14 @@ export interface ActiveReminderAlert {
 
 /**
  * Coordinates the 1-second countdown to 17:00 Monev deadline, live portal status
- * sync prior to ringing alarms, minute-level local alarm evaluation, and Catch-Up Check.
+ * sync prior to ringing alarms, minute-level local alarm evaluation, Catch-Up Check,
+ * and automatic 23:00 fallback submission copying yesterday's daily log.
  */
 export function useReminderEngine() {
   const store = useMagangStore()
   const now = shallowRef(new Date())
   const lastCatchUpDate = shallowRef('')
+  const lastAutoFillHandledDate = shallowRef('')
   const activeAlert = shallowRef<ActiveReminderAlert | null>(null)
 
   let tickTimer: ReturnType<typeof setInterval> | null = null
@@ -38,6 +41,15 @@ export function useReminderEngine() {
     const sched = store.schedule.value
     const nowMinutes = now.value.getHours() * 60 + now.value.getMinutes()
     const checkMinutes = parseTimeToMinutes(sched.monevCheckTime)
+
+    if (rec.status === 'izin') {
+      return {
+        state: 'holiday' as const,
+        badge: 'Izin',
+        heading: 'Status Izin Aktif',
+        subtitle: 'Hari ini tercatat Izin di portal Monev, pengingat dijeda.'
+      }
+    }
 
     if (
       rec.isHolidayOverride ||
@@ -55,18 +67,25 @@ export function useReminderEngine() {
     if (rec.status === 'terisi') {
       return {
         state: 'filled' as const,
-        badge: 'Sudah Diisi',
-        heading: 'Monev Hari Ini Selesai',
-        subtitle: 'Alarm pengingat dan snooze hari ini otomatis dibatalkan.'
+        badge: rec.isAutoFilled ? 'Auto-Terisi' : 'Sudah Diisi',
+        heading: rec.isAutoFilled
+          ? 'Monev Hari Ini Diisi Otomatis'
+          : 'Monev Hari Ini Selesai',
+        subtitle: rec.isAutoFilled
+          ? 'Otomatis disalin dari kegiatan sebelumnya pada pukul 23:00.'
+          : 'Alarm pengingat dan snooze hari ini otomatis dibatalkan.'
       }
     }
 
     if (nowMinutes >= checkMinutes) {
+      const autoFillNote = sched.autoFillAt2300
+        ? ` Auto-isi berjalan pukul ${sched.autoFillTime || '23:00'} jika masih kosong.`
+        : ''
       return {
         state: 'overdue' as const,
         badge: 'Belum Diisi!',
         heading: 'Waktunya Isi Absen Monev!',
-        subtitle: `Sudah melewati pukul ${sched.monevCheckTime} ${sched.timezone}. Segera isi di portal Kemnaker.`
+        subtitle: `Sudah melewati pukul ${sched.monevCheckTime} ${sched.timezone}.${autoFillNote}`
       }
     }
 
@@ -90,6 +109,41 @@ export function useReminderEngine() {
 
   function showAlertBanner(alert: ActiveReminderAlert) {
     activeAlert.value = alert
+  }
+
+  async function maybeAutoFillAt2300(): Promise<void> {
+    if (!store.isAuthenticated.value) return
+    const currentNow = now.value
+    const todayKey = toLocalDateKey(currentNow)
+    if (lastAutoFillHandledDate.value === todayKey) return
+
+    if (
+      !shouldTriggerAutoFill2300(
+        currentNow,
+        store.schedule.value,
+        store.todayRecord.value
+      )
+    ) {
+      return
+    }
+
+    const res = await store.runAutoFill2300()
+    if (res.outcome !== 'unavailable') {
+      lastAutoFillHandledDate.value = todayKey
+    }
+    if (res.outcome === 'submitted') {
+      showAlertBanner({
+        title: 'Auto-Isi Monev 23:00 Berhasil',
+        body: res.message,
+        isSessionWarning: false
+      })
+    } else if (res.outcome === 'session_expired') {
+      showAlertBanner({
+        title: 'Auto-Isi Monev 23:00 Gagal (Sesi Habis)',
+        body: res.message,
+        isSessionWarning: true
+      })
+    }
   }
 
   async function evaluateAlarms(): Promise<void> {
@@ -132,7 +186,7 @@ export function useReminderEngine() {
       const title = isSessionWarn ? 'Sesi MagangHub Habis' : alarm.title
       const body = isSessionWarn
         ? 'Sesi MagangHub habis. Login & cek apakah Monev hari ini sudah diisi.'
-        : 'Absen Monev MagangHub hari ini belum diisi sampai batas jam kerja. Segera isi sekarang.'
+        : 'Jangan lupa isi monev! Absen Monev hari ini belum diisi.'
 
       showAlertBanner({ title, body, isSessionWarning: isSessionWarn })
       await triggerImmediateAlert(title, body)
@@ -153,6 +207,8 @@ export function useReminderEngine() {
         )
       }
     }
+
+    await maybeAutoFillAt2300()
   }
 
   async function runCatchUpCheck(): Promise<void> {
@@ -176,6 +232,9 @@ export function useReminderEngine() {
       }
     }
 
+    await maybeAutoFillAt2300()
+    if (store.todayRecord.value.status === 'terisi') return
+
     const todayKey = toLocalDateKey(new Date())
     if (lastCatchUpDate.value === todayKey) return
     if (!store.isCatchUpNeeded.value) return
@@ -183,7 +242,7 @@ export function useReminderEngine() {
     lastCatchUpDate.value = todayKey
     const title = `Pengingat Tertunda (Lewat ${store.schedule.value.monevCheckTime} ${store.schedule.value.timezone})`
     const body =
-      'Anda belum mengisi absen Monev MagangHub hari ini. Buka portal Kemnaker sekarang.'
+      'Jangan lupa isi monev! Anda belum mengisi absen Monev MagangHub hari ini.'
 
     showAlertBanner({
       title,

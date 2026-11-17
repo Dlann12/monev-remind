@@ -54,7 +54,10 @@ export const DEFAULT_SCHEDULE: ScheduleConfig = {
   monevCheckTime: '17:00',
   snoozeEnabled: true,
   timezone: 'WIB',
-  syncNationalHolidays: true
+  syncNationalHolidays: true,
+  autoFillAt2300: true,
+  autoFillTime: '23:00',
+  lastAutoFilledDate: ''
 }
 
 export const DEFAULT_ALARMS: AlarmRule[] = [

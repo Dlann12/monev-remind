@@ -1,18 +1,6 @@
-/**
- * Synthesizes an offline notification chime via Web Audio API so audio alerts
- * work in browser and WebView without external media dependencies.
- */
-export function playReminderChime(): void {
-  if (typeof window === 'undefined') return
+let cachedReminderAudio: HTMLAudioElement | null = null
 
-  if ('vibrate' in navigator) {
-    try {
-      navigator.vibrate([180, 90, 220])
-    } catch {
-      // Ignore vibration rejection on restricted browsers
-    }
-  }
-
+function playFallbackWebAudioChime(): void {
   const AudioCtx =
     window.AudioContext ||
     (window as unknown as { webkitAudioContext?: typeof AudioContext })
@@ -22,7 +10,7 @@ export function playReminderChime(): void {
 
   try {
     const ctx = new AudioCtx()
-    const notes = [587.33, 783.99, 987.77] // D5 -> G5 -> B5 gentle chime
+    const notes = [587.33, 783.99, 987.77]
     const startAt = ctx.currentTime
 
     notes.forEach((freq, idx) => {
@@ -52,3 +40,40 @@ export function playReminderChime(): void {
   }
 }
 
+/**
+ * Plays the custom "Jangan lupa isi monev!" MP3 alert sound (with Web Audio fallback)
+ * and vibrates the device when supported.
+ */
+export function playReminderChime(): void {
+  if (typeof window === 'undefined') return
+
+  if ('vibrate' in navigator) {
+    try {
+      navigator.vibrate([180, 90, 220])
+    } catch {
+      // Ignore vibration rejection on restricted browsers
+    }
+  }
+
+  if (typeof Audio !== 'undefined') {
+    try {
+      if (!cachedReminderAudio) {
+        cachedReminderAudio = new Audio('./sounds/reminder.mp3')
+        cachedReminderAudio.preload = 'auto'
+      }
+      cachedReminderAudio.currentTime = 0
+      cachedReminderAudio.volume = 1
+      const playPromise = cachedReminderAudio.play()
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {
+          playFallbackWebAudioChime()
+        })
+      }
+      return
+    } catch {
+      // Fallback below
+    }
+  }
+
+  playFallbackWebAudioChime()
+}

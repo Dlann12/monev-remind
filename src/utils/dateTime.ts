@@ -156,6 +156,31 @@ export function shouldTriggerCatchUp(
 }
 
 /**
+ * Auto-fill check:
+ * Triggers at/after 23:00 on an active workday when today's Monev is still unfilled.
+ */
+export function shouldTriggerAutoFill2300(
+  now: Date,
+  schedule: ScheduleConfig,
+  record?: MonevRecord | null
+): boolean {
+  if (!schedule.autoFillAt2300) return false
+  if (!isWorkdayActive(now, schedule, record)) return false
+  if (
+    record?.status === 'terisi' ||
+    record?.status === 'izin' ||
+    record?.status === 'libur'
+  ) {
+    return false
+  }
+  const todayKey = toLocalDateKey(now)
+  if (schedule.lastAutoFilledDate === todayKey) return false
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  const autoFillMinutes = parseTimeToMinutes(schedule.autoFillTime || '23:00')
+  return nowMinutes >= autoFillMinutes
+}
+
+/**
  * PRD FR-04: Detect whether the MagangHub portal session is likely expired.
  */
 export function isSessionLikelyExpired(

@@ -11,10 +11,15 @@ import {
   triggerImmediateAlert
 } from '@/services/capacitorBridge'
 import {
+  autoSubmitMonevFromYesterday,
   checkMonevTodayStatus,
   clearPortalSessionCookie,
   computeInitials,
+  findLatestDailyLogPayload,
+  mapOffDaysToWorkDays,
   openMonevPortalInApp,
+  syncNativeAutoFillSchedule,
+  type AutoFillMonevResult,
   type MonevStatusCheckResult
 } from '@/services/monevPortalService'
 import { sendTelegramReminder } from '@/services/telegramService'
@@ -36,6 +41,7 @@ import {
 const isInitialized = shallowRef(false)
 const isLoading = shallowRef(true)
 const isSyncingPortal = shallowRef(false)
+const isAutoFilling = shallowRef(false)
 
 const profile = ref<InternProfile>({ ...DEFAULT_PROFILE })
 const schedule = ref<ScheduleConfig>({ ...DEFAULT_SCHEDULE })
@@ -107,12 +113,14 @@ export function useMagangStore() {
     const filled = activeRecords.filter((r) => r.status === 'terisi').length
     const onLeave = activeRecords.filter((r) => r.status === 'izin').length
     const missed = activeRecords.filter((r) => r.status === 'terlewat').length
+    const unfilled = activeRecords.filter((r) => r.status === 'belum').length
+    const holiday = records.value.filter((r) => r.status === 'libur').length
     const total = activeRecords.length
     const percentage =
       total === 0
         ? 0
         : Math.min(100, Math.round(((filled + onLeave) / total) * 100))
-    return { filled, onLeave, missed, total, percentage }
+    return { filled, onLeave, missed, unfilled, holiday, total, percentage }
   })
 
   async function initStore(): Promise<void> {
@@ -121,6 +129,10 @@ export function useMagangStore() {
     try {
       await seedInitialData()
       await reloadAll()
+      await syncNativeAutoFillSchedule(
+        schedule.value.autoFillAt2300,
+        schedule.value.autoFillTime
+      )
       isInitialized.value = true
     } catch {
       alarms.value = [...DEFAULT_ALARMS]
@@ -151,6 +163,10 @@ export function useMagangStore() {
       alarms.value,
       schedule.value,
       todayRecord.value.status === 'terisi'
+    )
+    await syncNativeAutoFillSchedule(
+      schedule.value.autoFillAt2300,
+      schedule.value.autoFillTime
     )
   }
 
@@ -215,6 +231,7 @@ export function useMagangStore() {
 
     isSyncingPortal.value = true
     try {
+      const wasFilledBefore = todayRecord.value.status === 'terisi'
       const result = await checkMonevTodayStatus(profile.value.portalAccessToken)
 
       const profilePatchFromApi: Partial<InternProfile> = result.userProfile
@@ -229,9 +246,21 @@ export function useMagangStore() {
           }
         : {}
 
+      if (result.userProfile?.offDays && result.userProfile.offDays.length > 0) {
+        const syncedWorkDays = mapOffDaysToWorkDays(result.userProfile.offDays)
+        const currentSorted = [...schedule.value.workDays].sort().join(',')
+        if (syncedWorkDays.join(',') !== currentSorted) {
+          await updateSchedule({ workDays: syncedWorkDays })
+        }
+      }
+
       if (result.historyRecords) {
         await replaceSyncedHistory(result.historyRecords)
       }
+
+      const nativeAutoFilledToday =
+        result.lastAutoSubmittedDate === todayKey.value &&
+        schedule.value.lastAutoFilledDate !== todayKey.value
 
       if (result.outcome === 'filled') {
         await updateProfile({
@@ -242,18 +271,29 @@ export function useMagangStore() {
           lastPortalSyncNote: result.note,
           portalAccessToken: result.accessToken ?? profile.value.portalAccessToken
         })
+        if (nativeAutoFilledToday) {
+          await updateSchedule({ lastAutoFilledDate: todayKey.value })
+        }
         if (todayRecord.value.status !== 'terisi') {
           await upsertRecord({
+            ...todayRecord.value,
             date: todayKey.value,
             status: 'terisi',
             filledAt: result.checkedAt,
+            isAutoFilled: nativeAutoFilledToday || todayRecord.value.isAutoFilled,
             isHolidayOverride: false
           })
+        }
+        if (!wasFilledBefore) {
           await syncAlarmsToDevice()
           await addNotification({
-            title: 'Auto-Sync: Monev Hari Ini Terisi',
-            body: 'Terbaca otomatis dari portal MagangHub. Pengingat ulang dibatalkan.',
-            type: 'info'
+            title: nativeAutoFilledToday
+              ? 'Auto-Isi Monev 23:00 Berhasil'
+              : 'Auto-Sync: Monev Hari Ini Terisi',
+            body: nativeAutoFilledToday
+              ? `Monev hari ini diisi otomatis mengikuti catatan kegiatan ${result.lastAutoCopiedFromDate || 'kemarin'}.`
+              : 'Terbaca otomatis dari portal MagangHub. Pengingat ulang dibatalkan.',
+            type: nativeAutoFilledToday ? 'auto_fill' : 'info'
           })
         }
       } else if (result.outcome === 'off_day') {
@@ -266,9 +306,11 @@ export function useMagangStore() {
           portalAccessToken: result.accessToken ?? profile.value.portalAccessToken
         })
         await upsertRecord({
+          ...todayRecord.value,
           date: todayKey.value,
           status: 'libur',
           filledAt: null,
+          holidayName: todayRecord.value.holidayName || 'Hari Libur',
           isHolidayOverride: true
         })
         await syncAlarmsToDevice()
@@ -316,6 +358,81 @@ export function useMagangStore() {
       return result
     } finally {
       isSyncingPortal.value = false
+    }
+  }
+
+  async function runAutoFill2300(): Promise<AutoFillMonevResult> {
+    if (isAutoFilling.value) {
+      return {
+        outcome: 'unavailable',
+        submittedDate: todayKey.value,
+        copiedFromDate: '',
+        message: 'Auto-isi 23:00 sedang berjalan...'
+      }
+    }
+
+    isAutoFilling.value = true
+    try {
+      const fallbackDraft = findLatestDailyLogPayload(records.value, todayKey.value)
+      const res = await autoSubmitMonevFromYesterday({
+        accessToken: profile.value.portalAccessToken,
+        targetDate: todayKey.value,
+        fallbackDraft
+      })
+
+      if (res.accessToken && res.accessToken !== profile.value.portalAccessToken) {
+        await updateProfile({ portalAccessToken: res.accessToken })
+      }
+
+      if (res.outcome === 'submitted') {
+        await updateSchedule({ lastAutoFilledDate: todayKey.value })
+        await upsertRecord({
+          date: todayKey.value,
+          status: 'terisi',
+          filledAt: new Date().toISOString(),
+          approvalStatus: 'SUBMITTED',
+          activityLog: res.activityLog ?? fallbackDraft?.activity_log ?? '',
+          lessonLearned: fallbackDraft?.lesson_learned ?? '',
+          obstacles: fallbackDraft?.obstacles ?? '',
+          isAutoFilled: true,
+          isHolidayOverride: false
+        })
+        await syncAlarmsToDevice()
+
+        const title = 'Auto-Isi Monev 23:00 Berhasil'
+        const body = res.copiedFromDate
+          ? `Monev hari ini otomatis terisi mengikuti kegiatan tanggal ${res.copiedFromDate}.`
+          : 'Monev hari ini otomatis terisi mengikuti kegiatan sebelumnya.'
+
+        await triggerImmediateAlert(title, body)
+        await addNotification({ title, body, type: 'auto_fill' })
+        await syncPortalStatus()
+      } else if (res.outcome === 'already_filled') {
+        await updateSchedule({ lastAutoFilledDate: todayKey.value })
+        await syncPortalStatus()
+      } else if (res.outcome === 'session_expired') {
+        await updateProfile({
+          portalSyncState: 'session_expired',
+          sessionLastVerifiedAt: null,
+          lastPortalSyncNote: res.message,
+          portalAccessToken: ''
+        })
+        await addNotification({
+          title: 'Auto-Isi Monev 23:00 Gagal (Sesi Habis)',
+          body: 'Silakan login ulang ke MagangHub agar auto-isi aktif kembali.',
+          type: 'session_expired'
+        })
+      } else if (res.outcome === 'no_previous_log') {
+        await addNotification({
+          title: 'Auto-Isi Monev 23:00 Dilewati',
+          body: res.message,
+          type: 'auto_fill'
+        })
+      }
+
+      return res
+    } finally {
+      isAutoFilling.value = false
     }
   }
 
@@ -408,6 +525,9 @@ export function useMagangStore() {
     }
     if (todayRec?.isHolidayOverride && !map.has(todayKey.value)) {
       map.set(todayKey.value, todayRec)
+    } else if (todayRec?.isAutoFilled && map.has(todayKey.value)) {
+      const existing = map.get(todayKey.value)!
+      map.set(todayKey.value, { ...existing, isAutoFilled: true })
     }
     const merged = Array.from(map.values()).sort((a, b) =>
       b.date.localeCompare(a.date)
@@ -440,6 +560,7 @@ export function useMagangStore() {
       date: todayKey.value,
       status: nextHoliday ? 'libur' : 'belum',
       filledAt: null,
+      holidayName: nextHoliday ? 'Libur Manual' : undefined,
       isHolidayOverride: nextHoliday
     }
     await upsertRecord(next)
@@ -470,7 +591,7 @@ export function useMagangStore() {
   }> {
     const title = `Pengingat Absen Monev (${schedule.value.monevCheckTime} ${schedule.value.timezone})`
     const body =
-      'Absen Monev MagangHub hari ini belum diisi. Segera buka portal Kemnaker sebelum jam pulang.'
+      'Jangan lupa isi monev MagangHub hari ini! Buka portal Kemnaker sekarang.'
 
     await triggerImmediateAlert(title, body)
     await addNotification({ title, body, type: 'alarm' })
@@ -489,6 +610,7 @@ export function useMagangStore() {
   return {
     isLoading: readonly(isLoading),
     isSyncingPortal: readonly(isSyncingPortal),
+    isAutoFilling: readonly(isAutoFilling),
     profile: readonly(profile),
     schedule: readonly(schedule),
     alarms: readonly(alarms),
@@ -510,6 +632,7 @@ export function useMagangStore() {
     markAlarmTriggeredToday,
     updateProfile,
     syncPortalStatus,
+    runAutoFill2300,
     openPortalForLogin,
     openPortalAndSync,
     connectWithAccessToken,

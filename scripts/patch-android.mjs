@@ -9,7 +9,7 @@ if (!existsSync(manifestPath)) {
   process.exit(0)
 }
 
-// 1. Patch AndroidManifest.xml permissions
+// 1. Patch AndroidManifest.xml permissions, network config, and AutoMonevReceiver
 let manifest = readFileSync(manifestPath, 'utf-8')
 const permissions = [
   'android.permission.INTERNET',
@@ -37,6 +37,22 @@ if (!manifest.includes('android:networkSecurityConfig')) {
   console.log('Added networkSecurityConfig & usesCleartextTraffic to AndroidManifest.xml')
 }
 
+if (!manifest.includes('AutoMonevReceiver')) {
+  const receiverTag = `
+        <receiver
+            android:name="id.go.kemnaker.maganghub.reminder.AutoMonevReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="id.go.kemnaker.maganghub.reminder.ACTION_AUTO_FILL_MONEV" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>`
+  manifest = manifest.replace('</application>', receiverTag)
+  console.log('Registered AutoMonevReceiver in AndroidManifest.xml')
+}
+
 writeFileSync(manifestPath, manifest, 'utf-8')
 
 // 1b. Create res/xml/network_security_config.xml (allows http->https SSO redirect on kemnaker.go.id)
@@ -55,203 +71,45 @@ const networkSecurityXml = `<?xml version="1.0" encoding="utf-8"?>
 writeFileSync(resolve(xmlDir, 'network_security_config.xml'), networkSecurityXml, 'utf-8')
 console.log('Generated res/xml/network_security_config.xml')
 
-// 2. Write native MonevSyncPlugin.java (uses WebView CookieManager to fetch /users/me and /users/me/home)
+// 2. Write Java classes for Monev portal sync, complete history fetching, and 23:00 auto-fill
 const javaPkgDir = resolve(
   root,
   'android/app/src/main/java/id/go/kemnaker/maganghub/reminder'
 )
 mkdirSync(javaPkgDir, { recursive: true })
 
-const monevSyncJava = `package id.go.kemnaker.maganghub.reminder;
+const monevApiHelperJava = `package id.go.kemnaker.maganghub.reminder;
 
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.webkit.CookieManager;
-import com.getcapacitor.JSObject;
-import com.getcapacitor.Plugin;
-import com.getcapacitor.PluginCall;
-import com.getcapacitor.PluginMethod;
-import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-@CapacitorPlugin(name = "MonevSync")
-public class MonevSyncPlugin extends Plugin {
+final class MonevApiHelper {
 
-    private static final String API_BASE = "https://monev-api.maganghub.kemnaker.go.id/api/v1";
-    private static final String WEB_ORIGIN = "https://monev.maganghub.kemnaker.go.id";
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    static final String API_BASE = "https://monev-api.maganghub.kemnaker.go.id/api/v1";
+    static final String WEB_ORIGIN = "https://monev.maganghub.kemnaker.go.id";
+    static final String PREFS_NAME = "monev_auto_fill_prefs";
 
-    @Override
-    public void load() {
-        super.load();
-        CookieManager.getInstance().setAcceptCookie(true);
-    }
+    private MonevApiHelper() {}
 
-    @PluginMethod
-    public void checkTodayStatus(final PluginCall call) {
-        final String cachedToken = call.getString("accessToken", "");
-        executor.execute(() -> {
-            try {
-                CookieManager cm = CookieManager.getInstance();
-                cm.flush();
-                String apiCookies = cm.getCookie(API_BASE);
-                if (apiCookies == null) apiCookies = "";
-
-                if (apiCookies.isEmpty() && (cachedToken == null || cachedToken.isEmpty())) {
-                    JSObject res = new JSObject();
-                    res.put("state", "session_expired");
-                    res.put("reason", "no_cookie");
-                    call.resolve(res);
-                    return;
-                }
-
-                String token = cachedToken;
-                if (token == null || token.isEmpty()) {
-                    RefreshResult refresh = refreshAccessToken(cm, apiCookies);
-                    if (!"ok".equals(refresh.state)) {
-                        JSObject res = new JSObject();
-                        res.put("state", refresh.state);
-                        res.put("httpStatus", refresh.httpStatus);
-                        call.resolve(res);
-                        return;
-                    }
-                    token = refresh.accessToken;
-                    apiCookies = cm.getCookie(API_BASE);
-                    if (apiCookies == null) apiCookies = "";
-                }
-
-                HttpResult homeRes = requestJson(
-                    API_BASE + "/users/me/home",
-                    "GET",
-                    apiCookies,
-                    token
-                );
-
-                // Retry once with /auth/refresh if cached token expired
-                if ((homeRes.status == 401 || homeRes.status == 403) && !apiCookies.isEmpty()) {
-                    RefreshResult refresh = refreshAccessToken(cm, apiCookies);
-                    if (!"ok".equals(refresh.state)) {
-                        JSObject res = new JSObject();
-                        res.put("state", refresh.state);
-                        res.put("httpStatus", refresh.httpStatus);
-                        call.resolve(res);
-                        return;
-                    }
-                    token = refresh.accessToken;
-                    apiCookies = cm.getCookie(API_BASE);
-                    if (apiCookies == null) apiCookies = "";
-                    homeRes = requestJson(API_BASE + "/users/me/home", "GET", apiCookies, token);
-                }
-
-                if (homeRes.status == 401 || homeRes.status == 403) {
-                    JSObject res = new JSObject();
-                    res.put("state", "session_expired");
-                    res.put("httpStatus", homeRes.status);
-                    call.resolve(res);
-                    return;
-                }
-
-                if (homeRes.status < 200 || homeRes.status >= 300 || homeRes.body == null) {
-                    JSObject res = new JSObject();
-                    res.put("state", "unavailable");
-                    res.put("httpStatus", homeRes.status);
-                    call.resolve(res);
-                    return;
-                }
-
-                JSONObject homeRoot = new JSONObject(homeRes.body);
-                JSONObject homeData = homeRoot.has("data") && !homeRoot.isNull("data")
-                    ? homeRoot.getJSONObject("data")
-                    : homeRoot;
-
-                // Also fetch /users/me and /attendances so profile and history strictly follow Monev MagangHub
-                JSObject userObj = new JSObject();
-                JSONArray attendancesArr = new JSONArray();
-                HttpResult userRes = requestJson(API_BASE + "/users/me", "GET", apiCookies, token);
-                if (userRes.status >= 200 && userRes.status < 300 && userRes.body != null) {
-                    JSONObject userRoot = new JSONObject(userRes.body);
-                    JSONObject u = userRoot.has("data") && !userRoot.isNull("data")
-                        ? userRoot.getJSONObject("data")
-                        : userRoot;
-                    String userId = u.optString("id", "");
-                    String startRaw = u.optString("internship_start_date", "");
-                    String endRaw = u.optString("internship_end_date", "");
-
-                    userObj.put("id", userId);
-                    userObj.put("name", u.optString("name", ""));
-                    userObj.put("user_type", u.optString("user_type", ""));
-                    userObj.put("company", u.optString("company", ""));
-                    userObj.put("internship_company", u.optString("internship_company", ""));
-                    userObj.put("internship_position", u.optString("internship_position", ""));
-                    userObj.put("position", u.optString("position", ""));
-                    userObj.put("photo_url", u.optString("photo_url", ""));
-                    userObj.put("internship_start_date", startRaw);
-                    userObj.put("internship_end_date", endRaw);
-
-                    if (!userId.isEmpty() && startRaw.length() >= 10) {
-                        String startDate = startRaw.substring(0, 10);
-                        String todayStr = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
-                        String endDate = endRaw.length() >= 10 && endRaw.substring(0, 10).compareTo(todayStr) < 0
-                            ? endRaw.substring(0, 10)
-                            : todayStr;
-                        if (endDate.compareTo(startDate) >= 0) {
-                            String attUrl = API_BASE + "/attendances?participant_id="
-                                + URLEncoder.encode(userId, "UTF-8")
-                                + "&start_date=" + URLEncoder.encode(startDate, "UTF-8")
-                                + "&end_date=" + URLEncoder.encode(endDate, "UTF-8")
-                                + "&limit=500";
-                            HttpResult attRes = requestJson(attUrl, "GET", apiCookies, token);
-                            if (attRes.status >= 200 && attRes.status < 300 && attRes.body != null) {
-                                JSONObject attRoot = new JSONObject(attRes.body);
-                                if (attRoot.has("data") && !attRoot.isNull("data")) {
-                                    attendancesArr = attRoot.getJSONArray("data");
-                                }
-                            }
-                        }
-                    }
-                }
-
-                JSObject res = new JSObject();
-                res.put("state", "ok");
-                res.put("hasAttendance", homeData.optBoolean("has_attendance", false));
-                res.put("isScheduledOffDay", homeData.optBoolean("is_scheduled_off_day", false));
-                res.put("isHoliday", homeData.optBoolean("is_holiday", false));
-                res.put("accessToken", token);
-                res.put("user", userObj);
-                res.put("attendances", attendancesArr);
-                call.resolve(res);
-            } catch (Exception ex) {
-                JSObject res = new JSObject();
-                res.put("state", "unavailable");
-                res.put("error", ex.getMessage());
-                call.resolve(res);
-            }
-        });
-    }
-
-    @PluginMethod
-    public void clearPortalSession(PluginCall call) {
-        CookieManager.getInstance().removeSessionCookies(null);
-        CookieManager.getInstance().removeAllCookies(null);
-        CookieManager.getInstance().flush();
-        call.resolve();
-    }
-
-    private RefreshResult refreshAccessToken(CookieManager cm, String cookies) throws Exception {
-        HttpResult res = requestJson(API_BASE + "/auth/refresh", "POST", cookies, null);
+    static RefreshResult refreshAccessToken(CookieManager cm, String cookies) throws Exception {
+        HttpResult res = requestJson(API_BASE + "/auth/refresh", "POST", cookies, null, null);
         saveSetCookies(cm, res.setCookies);
 
         if (res.status == 401 || res.status == 403) {
@@ -272,7 +130,382 @@ public class MonevSyncPlugin extends Plugin {
         return new RefreshResult("ok", res.status, token);
     }
 
-    private void saveSetCookies(CookieManager cm, List<String> setCookies) {
+    static AuthContext resolveAuthenticatedSession(String cachedToken) throws Exception {
+        CookieManager cm = CookieManager.getInstance();
+        cm.setAcceptCookie(true);
+        cm.flush();
+
+        String apiCookies = cm.getCookie(API_BASE);
+        if (apiCookies == null) apiCookies = "";
+
+        if (apiCookies.isEmpty() && (cachedToken == null || cachedToken.isEmpty())) {
+            return new AuthContext("session_expired", "no_cookie", 0, "", "");
+        }
+
+        String token = cachedToken != null ? cachedToken : "";
+        if (token.isEmpty()) {
+            RefreshResult refresh = refreshAccessToken(cm, apiCookies);
+            if (!"ok".equals(refresh.state)) {
+                return new AuthContext(refresh.state, "", refresh.httpStatus, "", "");
+            }
+            token = refresh.accessToken;
+            apiCookies = cm.getCookie(API_BASE);
+            if (apiCookies == null) apiCookies = "";
+        }
+
+        return new AuthContext("ok", "", 200, token, apiCookies);
+    }
+
+    static AuthContext revalidateOnUnauthorized(String currentCookies) throws Exception {
+        CookieManager cm = CookieManager.getInstance();
+        String apiCookies = currentCookies != null ? currentCookies : cm.getCookie(API_BASE);
+        if (apiCookies == null || apiCookies.isEmpty()) {
+            return new AuthContext("session_expired", "no_cookie", 401, "", "");
+        }
+        RefreshResult refresh = refreshAccessToken(cm, apiCookies);
+        if (!"ok".equals(refresh.state)) {
+            return new AuthContext(refresh.state, "", refresh.httpStatus, "", "");
+        }
+        String refreshedCookies = cm.getCookie(API_BASE);
+        if (refreshedCookies == null) refreshedCookies = "";
+        return new AuthContext("ok", "", refresh.httpStatus, refresh.accessToken, refreshedCookies);
+    }
+
+    static JSONArray fetchPaginatedAttendances(
+        String userId,
+        String startDate,
+        String endDate,
+        String cookies,
+        String token
+    ) {
+        JSONArray combined = new JSONArray();
+        final int pageSize = 100;
+        try {
+            for (int page = 1; page <= 15; page++) {
+                String attUrl = API_BASE + "/attendances?participant_id="
+                    + URLEncoder.encode(userId, "UTF-8")
+                    + "&start_date=" + URLEncoder.encode(startDate, "UTF-8")
+                    + "&end_date=" + URLEncoder.encode(endDate, "UTF-8")
+                    + "&page=" + page
+                    + "&limit=" + pageSize;
+                HttpResult attRes = requestJson(attUrl, "GET", cookies, token, null);
+                if (attRes.status < 200 || attRes.status >= 300 || attRes.body == null) {
+                    break;
+                }
+                JSONObject attRoot = new JSONObject(attRes.body);
+                if (!attRoot.has("data") || attRoot.isNull("data")) {
+                    break;
+                }
+                JSONArray pageArr = attRoot.getJSONArray("data");
+                for (int i = 0; i < pageArr.length(); i++) {
+                    combined.put(pageArr.get(i));
+                }
+                int total = attRoot.optInt("total", -1);
+                if (pageArr.length() < pageSize || (total >= 0 && combined.length() >= total)) {
+                    break;
+                }
+            }
+        } catch (Exception ignored) {
+            // Return items fetched so far
+        }
+        return combined;
+    }
+
+    static JSONArray fetchPaginatedHolidays(String cookies, String token) {
+        JSONArray combined = new JSONArray();
+        final int pageSize = 100;
+        try {
+            for (int page = 1; page <= 10; page++) {
+                String url = API_BASE + "/holidays?page=" + page + "&limit=" + pageSize;
+                HttpResult res = requestJson(url, "GET", cookies, token, null);
+                if (res.status < 200 || res.status >= 300 || res.body == null) {
+                    break;
+                }
+                JSONObject root = new JSONObject(res.body);
+                if (!root.has("data") || root.isNull("data")) {
+                    break;
+                }
+                JSONArray pageArr = root.getJSONArray("data");
+                for (int i = 0; i < pageArr.length(); i++) {
+                    combined.put(pageArr.get(i));
+                }
+                int total = root.optInt("total", -1);
+                if (pageArr.length() < pageSize || (total >= 0 && combined.length() >= total)) {
+                    break;
+                }
+            }
+        } catch (Exception ignored) {
+            // Return items fetched so far
+        }
+        return combined;
+    }
+
+    static JSONArray fetchDailyLogsForMonth(
+        String userId,
+        String monthFirstDate,
+        String cookies,
+        String token
+    ) {
+        JSONArray result = new JSONArray();
+        try {
+            String url = API_BASE + "/daily-logs?participant_id="
+                + URLEncoder.encode(userId, "UTF-8")
+                + "&date=" + URLEncoder.encode(monthFirstDate, "UTF-8")
+                + "&limit=100";
+            HttpResult res = requestJson(url, "GET", cookies, token, null);
+            if (res.status >= 200 && res.status < 300 && res.body != null) {
+                JSONObject root = new JSONObject(res.body);
+                if (root.has("data") && !root.isNull("data")) {
+                    result = root.getJSONArray("data");
+                }
+            }
+        } catch (Exception ignored) {
+            // Ignore failing month fetch
+        }
+        return result;
+    }
+
+    static JSONArray fetchDailyLogsInRange(
+        String userId,
+        String startDate,
+        String endDate,
+        String cookies,
+        String token
+    ) {
+        JSONArray combined = new JSONArray();
+        try {
+            SimpleDateFormat ymFmt = new SimpleDateFormat("yyyy-MM", Locale.US);
+            Date startD = ymFmt.parse(startDate.substring(0, 7));
+            Date endD = ymFmt.parse(endDate.substring(0, 7));
+            if (startD == null || endD == null) return combined;
+
+            Calendar cur = Calendar.getInstance();
+            cur.setTime(startD);
+            cur.set(Calendar.DAY_OF_MONTH, 1);
+
+            Calendar endCal = Calendar.getInstance();
+            endCal.setTime(endD);
+            endCal.set(Calendar.DAY_OF_MONTH, 1);
+
+            int guard = 0;
+            while (!cur.after(endCal) && guard < 24) {
+                String monthFirst = ymFmt.format(cur.getTime()) + "-01";
+                JSONArray monthArr = fetchDailyLogsForMonth(userId, monthFirst, cookies, token);
+                for (int i = 0; i < monthArr.length(); i++) {
+                    combined.put(monthArr.get(i));
+                }
+                cur.add(Calendar.MONTH, 1);
+                guard++;
+            }
+        } catch (Exception ignored) {
+            // Ignore malformed date range
+        }
+        return combined;
+    }
+
+    static JSONObject findLatestDailyLogBefore(
+        String userId,
+        String targetDate,
+        String cookies,
+        String token
+    ) {
+        JSONObject best = null;
+        String bestDate = "";
+
+        try {
+            SimpleDateFormat ymFmt = new SimpleDateFormat("yyyy-MM", Locale.US);
+            Date baseDate = ymFmt.parse(targetDate.substring(0, 7));
+            if (baseDate == null) baseDate = new Date();
+
+            Calendar cal = Calendar.getInstance();
+            cal.setTime(baseDate);
+            cal.set(Calendar.DAY_OF_MONTH, 1);
+
+            for (int offset = 0; offset < 3; offset++) {
+                String monthFirst = ymFmt.format(cal.getTime()) + "-01";
+                JSONArray arr = fetchDailyLogsForMonth(userId, monthFirst, cookies, token);
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject item = arr.optJSONObject(i);
+                    if (item == null) continue;
+                    String rawDate = item.optString("date", "");
+                    if (rawDate.length() < 10) continue;
+                    String dateKey = rawDate.substring(0, 10);
+                    if (dateKey.compareTo(targetDate) >= 0) continue;
+
+                    String activityLog = item.optString("activity_log", "").trim();
+                    if (activityLog.isEmpty()) continue;
+
+                    if (dateKey.compareTo(bestDate) > 0) {
+                        bestDate = dateKey;
+                        best = item;
+                    }
+                }
+                if (best != null) break;
+                cal.add(Calendar.MONTH, -1);
+            }
+        } catch (Exception ignored) {
+            // Fall through returning best found so far
+        }
+        return best;
+    }
+
+    static AutoFillResult executeAutoFillToday(
+        Context context,
+        String cachedToken,
+        String targetDateOverride,
+        String fallbackActivityLog,
+        String fallbackLessonLearned,
+        String fallbackObstacles
+    ) {
+        String todayStr = (targetDateOverride != null && targetDateOverride.length() >= 10)
+            ? targetDateOverride.substring(0, 10)
+            : new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+
+        try {
+            AuthContext auth = resolveAuthenticatedSession(cachedToken);
+            if (!"ok".equals(auth.state)) {
+                return AutoFillResult.error(auth.state, auth.reason, auth.httpStatus, "Sesi login MagangHub tidak aktif.");
+            }
+
+            String token = auth.accessToken;
+            String cookies = auth.cookies;
+
+            HttpResult homeRes = requestJson(API_BASE + "/users/me/home", "GET", cookies, token, null);
+            if (homeRes.status == 401 || homeRes.status == 403) {
+                AuthContext retry = revalidateOnUnauthorized(cookies);
+                if (!"ok".equals(retry.state)) {
+                    return AutoFillResult.error(retry.state, retry.reason, retry.httpStatus, "Sesi login MagangHub habis.");
+                }
+                token = retry.accessToken;
+                cookies = retry.cookies;
+                homeRes = requestJson(API_BASE + "/users/me/home", "GET", cookies, token, null);
+            }
+
+            if (homeRes.status == 401 || homeRes.status == 403) {
+                return AutoFillResult.error("session_expired", "unauthorized", homeRes.status, "Sesi login MagangHub habis.");
+            }
+            if (homeRes.status < 200 || homeRes.status >= 300 || homeRes.body == null) {
+                return AutoFillResult.error("unavailable", "http_error", homeRes.status, "Portal Kemnaker gagal dihubungi.");
+            }
+
+            JSONObject homeRoot = new JSONObject(homeRes.body);
+            JSONObject homeData = homeRoot.has("data") && !homeRoot.isNull("data")
+                ? homeRoot.getJSONObject("data")
+                : homeRoot;
+
+            if (homeData.optBoolean("is_scheduled_off_day", false) || homeData.optBoolean("is_holiday", false)) {
+                AutoFillResult offRes = new AutoFillResult("off_day", "", 200, "Hari ini hari libur / di luar jadwal.", token);
+                offRes.submittedDate = todayStr;
+                return offRes;
+            }
+            if (homeData.optBoolean("has_attendance", false)) {
+                AutoFillResult filledRes = new AutoFillResult("already_filled", "", 200, "Monev hari ini sudah terisi.", token);
+                filledRes.submittedDate = todayStr;
+                return filledRes;
+            }
+
+            HttpResult userRes = requestJson(API_BASE + "/users/me", "GET", cookies, token, null);
+            String userId = "";
+            if (userRes.status >= 200 && userRes.status < 300 && userRes.body != null) {
+                JSONObject userRoot = new JSONObject(userRes.body);
+                JSONObject u = userRoot.has("data") && !userRoot.isNull("data")
+                    ? userRoot.getJSONObject("data")
+                    : userRoot;
+                userId = u.optString("id", "");
+            }
+
+            String activityLog = "";
+            String lessonLearned = "";
+            String obstacles = "";
+            String copiedFromDate = "";
+
+            if (!userId.isEmpty()) {
+                JSONObject latestLog = findLatestDailyLogBefore(userId, todayStr, cookies, token);
+                if (latestLog != null) {
+                    copiedFromDate = latestLog.optString("date", "").length() >= 10
+                        ? latestLog.optString("date", "").substring(0, 10)
+                        : "";
+                    activityLog = latestLog.optString("activity_log", "").trim();
+                    lessonLearned = latestLog.optString("lesson_learned", "").trim();
+                    obstacles = latestLog.optString("obstacles", "").trim();
+                }
+            }
+
+            if (activityLog.isEmpty() && fallbackActivityLog != null && !fallbackActivityLog.trim().isEmpty()) {
+                activityLog = fallbackActivityLog.trim();
+                lessonLearned = fallbackLessonLearned != null ? fallbackLessonLearned.trim() : "";
+                obstacles = fallbackObstacles != null ? fallbackObstacles.trim() : "";
+            }
+
+            if (activityLog.isEmpty()) {
+                return AutoFillResult.error("no_previous_log", "no_previous_log", 200, "Belum ada kegiatan kemarin yang bisa disalin.");
+            }
+
+            JSONObject payload = new JSONObject();
+            payload.put("date", todayStr);
+            payload.put("status", "PRESENT");
+            payload.put("activity_log", activityLog);
+            payload.put("lesson_learned", lessonLearned);
+            payload.put("obstacles", obstacles);
+
+            HttpResult postRes = requestJson(
+                API_BASE + "/attendances/with-daily-log",
+                "POST",
+                cookies,
+                token,
+                payload.toString()
+            );
+
+            if (postRes.status >= 200 && postRes.status < 300) {
+                if (context != null) {
+                    SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                    prefs.edit()
+                        .putString("last_submitted_date", todayStr)
+                        .putString("last_copied_from", copiedFromDate)
+                        .putString("last_submit_status", "submitted")
+                        .apply();
+                }
+                AutoFillResult ok = new AutoFillResult(
+                    "submitted",
+                    "",
+                    postRes.status,
+                    copiedFromDate.isEmpty()
+                        ? "Auto-isi Monev 23:00 berhasil dikirim."
+                        : "Auto-isi Monev 23:00 berhasil menyalin kegiatan " + copiedFromDate + ".",
+                    token
+                );
+                ok.submittedDate = todayStr;
+                ok.copiedFromDate = copiedFromDate;
+                ok.activityLog = activityLog;
+                ok.lessonLearned = lessonLearned;
+                ok.obstacles = obstacles;
+                return ok;
+            }
+
+            String errMsg = "Gagal mengirim Monev otomatis (HTTP " + postRes.status + ").";
+            if (postRes.body != null && !postRes.body.isEmpty()) {
+                try {
+                    JSONObject errJson = new JSONObject(postRes.body);
+                    String serverMsg = errJson.optString("message", "");
+                    if (!serverMsg.isEmpty()) {
+                        errMsg = serverMsg;
+                    }
+                } catch (Exception ignored) {
+                    // Use HTTP error fallback
+                }
+            }
+            return AutoFillResult.error(
+                postRes.status == 401 || postRes.status == 403 ? "session_expired" : "unavailable",
+                "submit_failed",
+                postRes.status,
+                errMsg
+            );
+        } catch (Exception ex) {
+            return AutoFillResult.error("unavailable", "exception", 0, ex.getMessage() != null ? ex.getMessage() : "Kesalahan jaringan.");
+        }
+    }
+
+    static void saveSetCookies(CookieManager cm, List<String> setCookies) {
         if (setCookies == null) return;
         for (String cookie : setCookies) {
             cm.setCookie(API_BASE, cookie);
@@ -281,13 +514,18 @@ public class MonevSyncPlugin extends Plugin {
         cm.flush();
     }
 
-    private HttpResult requestJson(String urlStr, String method, String cookies, String bearerToken)
-        throws Exception {
+    static HttpResult requestJson(
+        String urlStr,
+        String method,
+        String cookies,
+        String bearerToken,
+        String jsonBody
+    ) throws Exception {
         URL url = new URL(urlStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod(method);
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(12000);
+        conn.setConnectTimeout(12000);
+        conn.setReadTimeout(15000);
         conn.setUseCaches(false);
         conn.setRequestProperty("Accept", "application/json");
         conn.setRequestProperty("Origin", WEB_ORIGIN);
@@ -298,9 +536,18 @@ public class MonevSyncPlugin extends Plugin {
         if (bearerToken != null && !bearerToken.isEmpty()) {
             conn.setRequestProperty("Authorization", "Bearer " + bearerToken);
         }
-        if ("POST".equals(method)) {
+        if ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method)) {
             conn.setDoOutput(true);
-            conn.setFixedLengthStreamingMode(0);
+            if (jsonBody != null) {
+                byte[] bytes = jsonBody.getBytes(StandardCharsets.UTF_8);
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                conn.setFixedLengthStreamingMode(bytes.length);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(bytes);
+                }
+            } else {
+                conn.setFixedLengthStreamingMode(0);
+            }
         }
 
         int status = conn.getResponseCode();
@@ -333,7 +580,23 @@ public class MonevSyncPlugin extends Plugin {
         return new HttpResult(status, sb.toString(), setCookies);
     }
 
-    private static final class RefreshResult {
+    static final class AuthContext {
+        final String state;
+        final String reason;
+        final int httpStatus;
+        final String accessToken;
+        final String cookies;
+
+        AuthContext(String state, String reason, int httpStatus, String accessToken, String cookies) {
+            this.state = state;
+            this.reason = reason;
+            this.httpStatus = httpStatus;
+            this.accessToken = accessToken;
+            this.cookies = cookies;
+        }
+    }
+
+    static final class RefreshResult {
         final String state;
         final int httpStatus;
         final String accessToken;
@@ -345,7 +608,7 @@ public class MonevSyncPlugin extends Plugin {
         }
     }
 
-    private static final class HttpResult {
+    static final class HttpResult {
         final int status;
         final String body;
         final List<String> setCookies;
@@ -356,11 +619,485 @@ public class MonevSyncPlugin extends Plugin {
             this.setCookies = setCookies;
         }
     }
+
+    static final class AutoFillResult {
+        final String state;
+        final String reason;
+        final int httpStatus;
+        final String message;
+        final String accessToken;
+        String submittedDate = "";
+        String copiedFromDate = "";
+        String activityLog = "";
+        String lessonLearned = "";
+        String obstacles = "";
+
+        AutoFillResult(String state, String reason, int httpStatus, String message, String accessToken) {
+            this.state = state;
+            this.reason = reason;
+            this.httpStatus = httpStatus;
+            this.message = message;
+            this.accessToken = accessToken;
+        }
+
+        static AutoFillResult error(String state, String reason, int httpStatus, String message) {
+            return new AutoFillResult(state, reason, httpStatus, message, "");
+        }
+    }
 }
 `
 
+const monevSyncJava = `package id.go.kemnaker.maganghub.reminder;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.webkit.CookieManager;
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+@CapacitorPlugin(name = "MonevSync")
+public class MonevSyncPlugin extends Plugin {
+
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+
+    @Override
+    public void load() {
+        super.load();
+        CookieManager.getInstance().setAcceptCookie(true);
+    }
+
+    @PluginMethod
+    public void checkTodayStatus(final PluginCall call) {
+        final String cachedToken = call.getString("accessToken", "");
+        executor.execute(() -> {
+            try {
+                MonevApiHelper.AuthContext auth = MonevApiHelper.resolveAuthenticatedSession(cachedToken);
+                if (!"ok".equals(auth.state)) {
+                    JSObject res = new JSObject();
+                    res.put("state", auth.state);
+                    if (!auth.reason.isEmpty()) res.put("reason", auth.reason);
+                    if (auth.httpStatus > 0) res.put("httpStatus", auth.httpStatus);
+                    call.resolve(res);
+                    return;
+                }
+
+                String token = auth.accessToken;
+                String apiCookies = auth.cookies;
+
+                MonevApiHelper.HttpResult homeRes = MonevApiHelper.requestJson(
+                    MonevApiHelper.API_BASE + "/users/me/home",
+                    "GET",
+                    apiCookies,
+                    token,
+                    null
+                );
+
+                if (homeRes.status == 401 || homeRes.status == 403) {
+                    MonevApiHelper.AuthContext retry = MonevApiHelper.revalidateOnUnauthorized(apiCookies);
+                    if (!"ok".equals(retry.state)) {
+                        JSObject res = new JSObject();
+                        res.put("state", retry.state);
+                        res.put("httpStatus", retry.httpStatus);
+                        call.resolve(res);
+                        return;
+                    }
+                    token = retry.accessToken;
+                    apiCookies = retry.cookies;
+                    homeRes = MonevApiHelper.requestJson(
+                        MonevApiHelper.API_BASE + "/users/me/home",
+                        "GET",
+                        apiCookies,
+                        token,
+                        null
+                    );
+                }
+
+                if (homeRes.status == 401 || homeRes.status == 403) {
+                    JSObject res = new JSObject();
+                    res.put("state", "session_expired");
+                    res.put("httpStatus", homeRes.status);
+                    call.resolve(res);
+                    return;
+                }
+
+                if (homeRes.status < 200 || homeRes.status >= 300 || homeRes.body == null) {
+                    JSObject res = new JSObject();
+                    res.put("state", "unavailable");
+                    res.put("httpStatus", homeRes.status);
+                    call.resolve(res);
+                    return;
+                }
+
+                JSONObject homeRoot = new JSONObject(homeRes.body);
+                JSONObject homeData = homeRoot.has("data") && !homeRoot.isNull("data")
+                    ? homeRoot.getJSONObject("data")
+                    : homeRoot;
+
+                JSObject userObj = new JSObject();
+                JSONArray attendancesArr = new JSONArray();
+                JSONArray dailyLogsArr = new JSONArray();
+                JSONArray holidaysArr = new JSONArray();
+
+                MonevApiHelper.HttpResult userRes = MonevApiHelper.requestJson(
+                    MonevApiHelper.API_BASE + "/users/me",
+                    "GET",
+                    apiCookies,
+                    token,
+                    null
+                );
+
+                if (userRes.status >= 200 && userRes.status < 300 && userRes.body != null) {
+                    JSONObject userRoot = new JSONObject(userRes.body);
+                    JSONObject u = userRoot.has("data") && !userRoot.isNull("data")
+                        ? userRoot.getJSONObject("data")
+                        : userRoot;
+                    String userId = u.optString("id", "");
+                    String startRaw = u.optString("internship_start_date", "");
+                    String endRaw = u.optString("internship_end_date", "");
+
+                    userObj.put("id", userId);
+                    userObj.put("name", u.optString("name", ""));
+                    userObj.put("user_type", u.optString("user_type", ""));
+                    userObj.put("company", u.optString("company", ""));
+                    userObj.put("internship_company", u.optString("internship_company", ""));
+                    userObj.put("internship_position", u.optString("internship_position", ""));
+                    userObj.put("position", u.optString("position", ""));
+                    userObj.put("photo_url", u.optString("photo_url", ""));
+                    userObj.put("internship_start_date", startRaw);
+                    userObj.put("internship_end_date", endRaw);
+                    userObj.put("internship_location_province_code", u.optString("internship_location_province_code", ""));
+                    userObj.put("internship_location_regency_code", u.optString("internship_location_regency_code", ""));
+                    if (u.has("off_days") && !u.isNull("off_days")) {
+                        userObj.put("off_days", u.getJSONArray("off_days"));
+                    }
+
+                    if (!userId.isEmpty() && startRaw.length() >= 10) {
+                        String startDate = startRaw.substring(0, 10);
+                        String todayStr = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+                        String endDate = endRaw.length() >= 10 && endRaw.substring(0, 10).compareTo(todayStr) < 0
+                            ? endRaw.substring(0, 10)
+                            : todayStr;
+                        if (endDate.compareTo(startDate) >= 0) {
+                            attendancesArr = MonevApiHelper.fetchPaginatedAttendances(
+                                userId, startDate, endDate, apiCookies, token
+                            );
+                            dailyLogsArr = MonevApiHelper.fetchDailyLogsInRange(
+                                userId, startDate, endDate, apiCookies, token
+                            );
+                        }
+                    }
+                    holidaysArr = MonevApiHelper.fetchPaginatedHolidays(apiCookies, token);
+                }
+
+                SharedPreferences prefs = getContext().getSharedPreferences(
+                    MonevApiHelper.PREFS_NAME, Context.MODE_PRIVATE
+                );
+
+                JSObject res = new JSObject();
+                res.put("state", "ok");
+                res.put("hasAttendance", homeData.optBoolean("has_attendance", false));
+                res.put("isScheduledOffDay", homeData.optBoolean("is_scheduled_off_day", false));
+                res.put("isHoliday", homeData.optBoolean("is_holiday", false));
+                res.put("accessToken", token);
+                res.put("user", userObj);
+                res.put("attendances", attendancesArr);
+                res.put("dailyLogs", dailyLogsArr);
+                res.put("holidays", holidaysArr);
+                res.put("lastAutoSubmittedDate", prefs.getString("last_submitted_date", ""));
+                res.put("lastAutoCopiedFromDate", prefs.getString("last_copied_from", ""));
+                call.resolve(res);
+            } catch (Exception ex) {
+                JSObject res = new JSObject();
+                res.put("state", "unavailable");
+                res.put("error", ex.getMessage());
+                call.resolve(res);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void submitAutoMonev(final PluginCall call) {
+        final String cachedToken = call.getString("accessToken", "");
+        final String targetDate = call.getString("targetDate", "");
+        final String fallbackActivityLog = call.getString("activityLog", "");
+        final String fallbackLessonLearned = call.getString("lessonLearned", "");
+        final String fallbackObstacles = call.getString("obstacles", "");
+
+        executor.execute(() -> {
+            MonevApiHelper.AutoFillResult result = MonevApiHelper.executeAutoFillToday(
+                getContext(),
+                cachedToken,
+                targetDate,
+                fallbackActivityLog,
+                fallbackLessonLearned,
+                fallbackObstacles
+            );
+            JSObject res = new JSObject();
+            res.put("state", result.state);
+            res.put("reason", result.reason);
+            res.put("httpStatus", result.httpStatus);
+            res.put("message", result.message);
+            res.put("accessToken", result.accessToken);
+            res.put("submittedDate", result.submittedDate);
+            res.put("copiedFromDate", result.copiedFromDate);
+            res.put("activityLog", result.activityLog);
+            call.resolve(res);
+        });
+    }
+
+    @PluginMethod
+    public void scheduleAutoFillAlarm(final PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", true));
+        int hour = call.getInt("hour", 23);
+        int minute = call.getInt("minute", 0);
+
+        SharedPreferences prefs = getContext().getSharedPreferences(
+            MonevApiHelper.PREFS_NAME, Context.MODE_PRIVATE
+        );
+        prefs.edit()
+            .putBoolean("auto_fill_enabled", enabled)
+            .putInt("auto_fill_hour", hour)
+            .putInt("auto_fill_minute", minute)
+            .apply();
+
+        AutoMonevReceiver.scheduleNext(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void clearPortalSession(PluginCall call) {
+        CookieManager.getInstance().removeSessionCookies(null);
+        CookieManager.getInstance().removeAllCookies(null);
+        CookieManager.getInstance().flush();
+        SharedPreferences prefs = getContext().getSharedPreferences(
+            MonevApiHelper.PREFS_NAME, Context.MODE_PRIVATE
+        );
+        prefs.edit().clear().apply();
+        AutoMonevReceiver.cancelAlarm(getContext());
+        call.resolve();
+    }
+}
+`
+
+const autoMonevReceiverJava = `package id.go.kemnaker.maganghub.reminder;
+
+import android.app.AlarmManager;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.media.AudioAttributes;
+import android.net.Uri;
+import android.os.Build;
+import androidx.core.app.NotificationCompat;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class AutoMonevReceiver extends BroadcastReceiver {
+
+    static final String ACTION_AUTO_FILL = "id.go.kemnaker.maganghub.reminder.ACTION_AUTO_FILL_MONEV";
+    private static final String CHANNEL_ID = "monev_voice_alarm_v1";
+    private static final int REQUEST_CODE = 2300;
+    private static final int NOTIF_ID = 2301;
+    private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
+
+    @Override
+    public void onReceive(final Context context, final Intent intent) {
+        final String action = intent != null ? intent.getAction() : "";
+        if (Intent.ACTION_BOOT_COMPLETED.equals(action) || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
+            scheduleNext(context);
+            return;
+        }
+
+        SharedPreferences prefs = context.getSharedPreferences(
+            MonevApiHelper.PREFS_NAME, Context.MODE_PRIVATE
+        );
+        if (!prefs.getBoolean("auto_fill_enabled", true)) {
+            return;
+        }
+
+        final String todayStr = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+        if (todayStr.equals(prefs.getString("last_submitted_date", ""))) {
+            scheduleNext(context);
+            return;
+        }
+
+        final PendingResult pendingResult = goAsync();
+        EXECUTOR.execute(() -> {
+            try {
+                MonevApiHelper.AutoFillResult res = MonevApiHelper.executeAutoFillToday(
+                    context, "", todayStr, "", "", ""
+                );
+                if ("submitted".equals(res.state)) {
+                    postNotification(
+                        context,
+                        "Auto-Isi Monev 23:00 Berhasil",
+                        res.message
+                    );
+                } else if ("session_expired".equals(res.state)) {
+                    postNotification(
+                        context,
+                        "Auto-Isi Monev 23:00 Gagal (Sesi Habis)",
+                        "Login ulang ke MagangHub agar pengisian otomatis aktif kembali."
+                    );
+                } else if ("no_previous_log".equals(res.state)) {
+                    postNotification(
+                        context,
+                        "Auto-Isi Monev 23:00 Dilewati",
+                        "Belum ada catatan kegiatan sebelumnya untuk disalin otomatis."
+                    );
+                }
+            } finally {
+                scheduleNext(context);
+                pendingResult.finish();
+            }
+        });
+    }
+
+    static void scheduleNext(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(
+            MonevApiHelper.PREFS_NAME, Context.MODE_PRIVATE
+        );
+        if (!prefs.getBoolean("auto_fill_enabled", true)) {
+            cancelAlarm(context);
+            return;
+        }
+
+        int hour = prefs.getInt("auto_fill_hour", 23);
+        int minute = prefs.getInt("auto_fill_minute", 0);
+
+        Calendar target = Calendar.getInstance();
+        target.set(Calendar.HOUR_OF_DAY, hour);
+        target.set(Calendar.MINUTE, minute);
+        target.set(Calendar.SECOND, 0);
+        target.set(Calendar.MILLISECOND, 0);
+        if (target.getTimeInMillis() <= System.currentTimeMillis() + 5000L) {
+            target.add(Calendar.DAY_OF_MONTH, 1);
+        }
+
+        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (am == null) return;
+
+        PendingIntent pi = buildPendingIntent(context);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && am.canScheduleExactAlarms()) {
+                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, target.getTimeInMillis(), pi);
+            } else {
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, target.getTimeInMillis(), pi);
+            }
+        } catch (SecurityException ex) {
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, target.getTimeInMillis(), pi);
+        }
+    }
+
+    static void cancelAlarm(Context context) {
+        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (am != null) {
+            am.cancel(buildPendingIntent(context));
+        }
+    }
+
+    private static PendingIntent buildPendingIntent(Context context) {
+        Intent intent = new Intent(context, AutoMonevReceiver.class);
+        intent.setAction(ACTION_AUTO_FILL);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getBroadcast(context, REQUEST_CODE, intent, flags);
+    }
+
+    private static void postNotification(Context context, String title, String body) {
+        try {
+            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) return;
+
+            int rawSoundRes = context.getResources().getIdentifier(
+                "reminder_sound", "raw", context.getPackageName()
+            );
+            Uri soundUri = rawSoundRes != 0
+                ? Uri.parse("android.resource://" + context.getPackageName() + "/" + rawSoundRes)
+                : null;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm.getNotificationChannel(CHANNEL_ID) == null) {
+                NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "Pengingat Suara Monev",
+                    NotificationManager.IMPORTANCE_HIGH
+                );
+                channel.setDescription("Notifikasi suara pengingat dan auto-isi Monev MagangHub");
+                channel.enableVibration(true);
+                if (soundUri != null) {
+                    AudioAttributes attrs = new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build();
+                    channel.setSound(soundUri, attrs);
+                }
+                nm.createNotificationChannel(channel);
+            }
+
+            int smallIcon = context.getResources().getIdentifier(
+                "ic_stat_alarm", "drawable", context.getPackageName()
+            );
+            if (smallIcon == 0) {
+                smallIcon = android.R.drawable.ic_lock_idle_alarm;
+            }
+
+            Intent launchIntent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+            PendingIntent contentIntent = launchIntent != null
+                ? PendingIntent.getActivity(
+                    context,
+                    NOTIF_ID,
+                    launchIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                )
+                : null;
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(smallIcon)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true);
+
+            if (soundUri != null) {
+                builder.setSound(soundUri);
+            }
+            if (contentIntent != null) {
+                builder.setContentIntent(contentIntent);
+            }
+
+            nm.notify(NOTIF_ID, builder.build());
+        } catch (Exception ignored) {
+            // Ignore notification permission / background restrictions
+        }
+    }
+}
+`
+
+writeFileSync(resolve(javaPkgDir, 'MonevApiHelper.java'), monevApiHelperJava, 'utf-8')
 writeFileSync(resolve(javaPkgDir, 'MonevSyncPlugin.java'), monevSyncJava, 'utf-8')
-console.log('Generated MonevSyncPlugin.java')
+writeFileSync(resolve(javaPkgDir, 'AutoMonevReceiver.java'), autoMonevReceiverJava, 'utf-8')
+console.log('Generated MonevApiHelper.java, MonevSyncPlugin.java, AutoMonevReceiver.java')
 
 // 3. Register MonevSyncPlugin in MainActivity.java
 const mainActivityPath = resolve(javaPkgDir, 'MainActivity.java')
@@ -398,6 +1135,16 @@ const alarmIconXml = `<vector xmlns:android="http://schemas.android.com/apk/res/
 writeFileSync(resolve(drawableDir, 'ic_stat_alarm.xml'), alarmIconXml, 'utf-8')
 console.log('Generated res/drawable/ic_stat_alarm.xml')
 
+// 4b. Copy custom notification sound ("Jangan lupa isi monev!") into res/raw/
+const resDir = resolve(root, 'android/app/src/main/res')
+const customSoundSrc = resolve(root, 'resources/android/raw/reminder_sound.mp3')
+if (existsSync(customSoundSrc)) {
+  const rawDir = resolve(resDir, 'raw')
+  mkdirSync(rawDir, { recursive: true })
+  copyFileSync(customSoundSrc, resolve(rawDir, 'reminder_sound.mp3'))
+  console.log('Copied custom notification audio to res/raw/reminder_sound.mp3')
+}
+
 // 5. Bump minSdkVersion to 26 (required by @capacitor/inappbrowser / ioninappbrowser-android)
 const variablesGradlePath = resolve(root, 'android/variables.gradle')
 if (existsSync(variablesGradlePath)) {
@@ -411,7 +1158,6 @@ if (existsSync(variablesGradlePath)) {
 }
 
 // 6. Replace default Capacitor launcher icons & splash with custom MagangHub Reminder branding
-const resDir = resolve(root, 'android/app/src/main/res')
 const customAssetsDir = resolve(root, 'resources/android')
 const densities = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']
 

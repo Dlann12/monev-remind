@@ -10,6 +10,8 @@ interface Props {
     filled: number
     onLeave: number
     missed: number
+    unfilled: number
+    holiday: number
     total: number
     percentage: number
   }
@@ -22,27 +24,33 @@ interface Emits {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
-type HistoryFilter = 'all' | 'terisi' | 'izin' | 'belum' | 'libur'
+type HistoryFilter = 'all' | 'terisi' | 'izin' | 'terlewat' | 'belum' | 'libur'
 const activeFilter = shallowRef<HistoryFilter>('all')
 
 const filteredRecords = computed(() => {
   return props.records.filter((rec) => {
     if (activeFilter.value === 'all') return true
-    if (activeFilter.value === 'belum') {
-      return rec.status === 'belum' || rec.status === 'terlewat'
-    }
     return rec.status === activeFilter.value
   })
 })
 
-function formatApprovalLabel(approval?: string): string {
-  switch (approval) {
+function formatApprovalLabel(
+  approval?: string,
+  dailyLogState?: string
+): string {
+  if (dailyLogState === 'NEEDS_REVISION' || approval === 'REJECTED') {
+    return 'Perlu Revisi Mentor'
+  }
+  if (dailyLogState === 'REVISION_SUBMITTED') {
+    return 'Revisi Dikirim'
+  }
+  switch (approval || dailyLogState) {
     case 'APPROVED':
       return 'Disetujui Mentor'
     case 'SUBMITTED':
       return 'Menunggu Validasi'
     case 'REJECTED':
-      return 'Perlu Revisi'
+      return 'Ditolak / Revisi'
     default:
       return ''
   }
@@ -57,9 +65,39 @@ function statusBadgeLabel(status: MonevRecord['status']): string {
     case 'libur':
       return 'Libur'
     case 'terlewat':
-      return 'Terlewat'
+      return 'Tidak Hadir'
     default:
-      return 'Belum'
+      return 'Belum Diisi'
+  }
+}
+
+function statusAccentBarClass(status: MonevRecord['status']): string {
+  switch (status) {
+    case 'terisi':
+      return 'bg-on-tertiary-container'
+    case 'izin':
+      return 'bg-primary'
+    case 'terlewat':
+      return 'bg-error'
+    case 'libur':
+      return 'bg-outline-variant'
+    default:
+      return 'bg-amber-500'
+  }
+}
+
+function statusBadgeClass(status: MonevRecord['status']): string {
+  switch (status) {
+    case 'terisi':
+      return 'bg-secondary-fixed/50 text-on-secondary-fixed'
+    case 'izin':
+      return 'bg-primary-fixed text-on-primary-fixed'
+    case 'terlewat':
+      return 'bg-error-container text-on-error-container'
+    case 'libur':
+      return 'bg-surface-container text-on-surface-variant'
+    default:
+      return 'bg-amber-100 text-amber-900'
   }
 }
 </script>
@@ -67,14 +105,14 @@ function statusBadgeLabel(status: MonevRecord['status']): string {
 <template>
   <div class="flex flex-col w-full px-margin space-y-space-md">
     <!-- Summary Card -->
-    <div class="bg-surface-container-lowest rounded-xl p-space-md shadow-sm space-y-2.5">
+    <div class="bg-surface-container-lowest rounded-xl p-space-md shadow-sm space-y-3">
       <div class="flex items-start justify-between gap-2">
         <div>
           <h2 class="font-title-md text-title-md text-on-surface">
             Riwayat Kehadiran Monev
           </h2>
           <p class="font-body-sm text-body-sm text-on-surface-variant">
-            Data otomatis mengikuti portal <span class="text-primary font-medium">monev.maganghub.kemnaker.go.id</span>
+            Semua status hari magang mengikuti <span class="text-primary font-medium">monev.maganghub.kemnaker.go.id</span>
           </p>
         </div>
 
@@ -94,7 +132,7 @@ function statusBadgeLabel(status: MonevRecord['status']): string {
         </button>
       </div>
 
-      <div class="grid grid-cols-4 gap-2 text-center pt-1">
+      <div class="grid grid-cols-5 gap-1.5 text-center pt-1">
         <div class="bg-surface-container-low rounded-lg p-2">
           <span class="block font-title-md text-title-md text-secondary font-bold">
             {{ complianceStats.filled }}
@@ -116,7 +154,15 @@ function statusBadgeLabel(status: MonevRecord['status']): string {
             {{ complianceStats.missed }}
           </span>
           <span class="block font-label-sm text-label-sm text-on-surface-variant">
-            Terlewat
+            Tdk Hadir
+          </span>
+        </div>
+        <div class="bg-surface-container-low rounded-lg p-2">
+          <span class="block font-title-md text-title-md text-amber-700 font-bold">
+            {{ complianceStats.unfilled }}
+          </span>
+          <span class="block font-label-sm text-label-sm text-on-surface-variant">
+            Belum
           </span>
         </div>
         <div class="bg-surface-container-low rounded-lg p-2">
@@ -124,7 +170,7 @@ function statusBadgeLabel(status: MonevRecord['status']): string {
             {{ complianceStats.percentage }}%
           </span>
           <span class="block font-label-sm text-label-sm text-on-surface-variant">
-            Kepatuhan
+            Patuh
           </span>
         </div>
       </div>
@@ -154,7 +200,7 @@ function statusBadgeLabel(status: MonevRecord['status']): string {
         "
         @click="activeFilter = 'terisi'"
       >
-        Hadir
+        Hadir ({{ complianceStats.filled }})
       </button>
       <button
         type="button"
@@ -166,7 +212,19 @@ function statusBadgeLabel(status: MonevRecord['status']): string {
         "
         @click="activeFilter = 'izin'"
       >
-        Izin
+        Izin ({{ complianceStats.onLeave }})
+      </button>
+      <button
+        type="button"
+        class="px-3 py-1.5 rounded-full font-label-md text-label-md flex-shrink-0"
+        :class="
+          activeFilter === 'terlewat'
+            ? 'bg-primary text-on-primary'
+            : 'bg-surface-container-lowest text-on-surface-variant'
+        "
+        @click="activeFilter = 'terlewat'"
+      >
+        Tidak Hadir ({{ complianceStats.missed }})
       </button>
       <button
         type="button"
@@ -178,7 +236,7 @@ function statusBadgeLabel(status: MonevRecord['status']): string {
         "
         @click="activeFilter = 'belum'"
       >
-        Belum / Terlewat
+        Belum Diisi ({{ complianceStats.unfilled }})
       </button>
       <button
         type="button"
@@ -190,7 +248,7 @@ function statusBadgeLabel(status: MonevRecord['status']): string {
         "
         @click="activeFilter = 'libur'"
       >
-        Libur
+        Libur ({{ complianceStats.holiday }})
       </button>
     </div>
 
@@ -199,52 +257,62 @@ function statusBadgeLabel(status: MonevRecord['status']): string {
       <div
         v-for="rec in filteredRecords"
         :key="rec.date"
-        class="bg-surface-container-lowest rounded-xl p-space-md shadow-sm flex items-center justify-between gap-2 relative overflow-hidden"
+        class="bg-surface-container-lowest rounded-xl p-space-md shadow-sm flex items-start justify-between gap-2 relative overflow-hidden"
       >
         <div
           class="absolute top-0 left-0 w-1 h-full"
-          :class="
-            rec.status === 'terisi'
-              ? 'bg-on-tertiary-container'
-              : rec.status === 'izin'
-                ? 'bg-primary'
-                : rec.status === 'libur'
-                  ? 'bg-outline-variant'
-                  : 'bg-error'
-          "
+          :class="statusAccentBarClass(rec.status)"
         />
 
-        <div class="pl-2 min-w-0">
-          <p class="font-title-md text-title-md text-on-surface">
-            {{ formatIndonesianDate(rec.date) }}
-          </p>
-          <p class="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
+        <div class="pl-2 min-w-0 flex-1 space-y-1">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <p class="font-title-md text-title-md text-on-surface">
+              {{ formatIndonesianDate(rec.date) }}
+            </p>
+            <span
+              v-if="rec.isAutoFilled"
+              class="px-1.5 py-0.5 rounded bg-secondary-fixed/40 text-on-secondary-fixed font-label-sm text-label-sm"
+            >
+              Auto 23:00
+            </span>
+          </div>
+
+          <p class="font-body-sm text-body-sm text-on-surface-variant">
             <template v-if="rec.status === 'terisi'">
-              {{ formatApprovalLabel(rec.approvalStatus) || 'Tercatat hadir di Monev' }}
+              {{
+                formatApprovalLabel(rec.approvalStatus, rec.dailyLogState) ||
+                'Tercatat hadir di Monev'
+              }}
             </template>
             <template v-else-if="rec.status === 'izin'">
-              {{ formatApprovalLabel(rec.approvalStatus) || 'Izin tercatat di Monev' }}
+              {{
+                rec.leaveReason ||
+                formatApprovalLabel(rec.approvalStatus, rec.dailyLogState) ||
+                'Izin tercatat di Monev'
+              }}
+            </template>
+            <template v-else-if="rec.status === 'terlewat'">
+              Tercatat Tidak Hadir (ABSENT) di portal Monev
             </template>
             <template v-else-if="rec.status === 'libur'">
-              Hari libur / di luar jadwal magang
+              {{ rec.holidayName || 'Hari libur / di luar jadwal magang' }}
             </template>
             <template v-else>
-              Belum ada pengisian di portal Monev
+              Hari kerja belum ada pengisian di portal Monev
             </template>
+          </p>
+
+          <p
+            v-if="rec.activityLog"
+            class="font-body-sm text-body-sm text-on-surface-variant/85 line-clamp-2 bg-surface-container-low rounded-lg px-2.5 py-1.5"
+          >
+            {{ rec.activityLog }}
           </p>
         </div>
 
         <span
           class="font-label-sm text-label-sm px-2.5 py-1 rounded-full uppercase flex-shrink-0"
-          :class="
-            rec.status === 'terisi'
-              ? 'bg-secondary-fixed/50 text-on-secondary-fixed'
-              : rec.status === 'izin'
-                ? 'bg-primary-fixed text-on-primary-fixed'
-                : rec.status === 'libur'
-                  ? 'bg-surface-container text-on-surface-variant'
-                  : 'bg-error-container text-on-error-container'
-          "
+          :class="statusBadgeClass(rec.status)"
         >
           {{ statusBadgeLabel(rec.status) }}
         </span>

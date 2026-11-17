@@ -40,6 +40,7 @@ const dayLabels = [
 const timezones: TimezoneLabel[] = ['WIB', 'WITA', 'WIT']
 
 const monevCheckTime = shallowRef(props.schedule.monevCheckTime)
+const autoFillTime = shallowRef(props.schedule.autoFillTime || '23:00')
 const botToken = shallowRef(props.profile.telegramBotToken)
 const chatId = shallowRef(props.profile.telegramChatId)
 const telegramSavedMsg = shallowRef('')
@@ -48,6 +49,13 @@ watch(
   () => props.schedule.monevCheckTime,
   (val) => {
     monevCheckTime.value = val
+  }
+)
+
+watch(
+  () => props.schedule.autoFillTime,
+  (val) => {
+    if (val) autoFillTime.value = val
   }
 )
 
@@ -63,6 +71,11 @@ function toggleWorkDay(dayId: number) {
 function saveMonevCheckTime() {
   if (!monevCheckTime.value) return
   emit('updateSchedule', { monevCheckTime: monevCheckTime.value })
+}
+
+function saveAutoFillTime() {
+  if (!autoFillTime.value) return
+  emit('updateSchedule', { autoFillTime: autoFillTime.value })
 }
 
 function saveTelegramConfig() {
@@ -163,6 +176,58 @@ function saveTelegramConfig() {
       </div>
     </div>
 
+    <!-- Auto-Isi Monev Pukul 23:00 -->
+    <div class="bg-surface-container-lowest rounded-xl p-space-md shadow-sm space-y-3">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h3 class="font-title-md text-title-md text-on-surface">
+            Auto-Isi Monev Pukul 23:00
+          </h3>
+          <p class="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
+            Jika hingga pukul {{ autoFillTime }} hari kerja Monev belum diisi, aplikasi otomatis mengirim log harian menyalin kegiatan kemarin.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          :aria-checked="schedule.autoFillAt2300"
+          class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full transition-colors"
+          :class="schedule.autoFillAt2300 ? 'bg-secondary' : 'bg-outline-variant'"
+          @click="
+            emit('updateSchedule', {
+              autoFillAt2300: !schedule.autoFillAt2300
+            })
+          "
+        >
+          <span
+            class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow transition mt-0.5 ml-0.5"
+            :class="schedule.autoFillAt2300 ? 'translate-x-5' : 'translate-x-0'"
+          />
+        </button>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2.5 items-center">
+        <label class="bg-surface-container-low rounded-lg p-2.5 flex flex-col gap-1">
+          <span class="font-label-sm text-label-sm text-on-surface-variant">
+            Jam Eksekusi Auto-Isi
+          </span>
+          <input
+            v-model="autoFillTime"
+            type="time"
+            class="bg-transparent font-title-md text-title-md text-on-surface focus:outline-none"
+            @change="saveAutoFillTime"
+          />
+        </label>
+
+        <div class="bg-surface-container-low rounded-lg p-2.5 text-on-surface-variant font-body-sm text-body-sm">
+          <span class="block font-label-sm text-label-sm text-on-surface font-semibold">
+            Sumber Kegiatan
+          </span>
+          Menyalin log aktivitas hari kerja terakhir yang terisi.
+        </div>
+      </div>
+    </div>
+
     <!-- Jam Pengingat Utama & Zona Waktu (FR-01) -->
     <div class="bg-surface-container-lowest rounded-xl p-space-md shadow-sm space-y-3">
       <div>
@@ -170,7 +235,7 @@ function saveTelegramConfig() {
           Jadwal Pengingat Utama (Default 17:00)
         </h3>
         <p class="font-body-sm text-body-sm text-on-surface-variant">
-          Jika Monev belum diisi sampai jam ini, alarm &amp; notifikasi muncul otomatis.
+          Jika Monev belum diisi sampai jam ini, alarm &amp; notifikasi suara muncul otomatis.
         </p>
       </div>
 
@@ -219,7 +284,7 @@ function saveTelegramConfig() {
             Alarm &amp; Pengingat Ulang (Snooze)
           </h3>
           <p class="font-body-sm text-body-sm text-on-surface-variant">
-            Otomatis berhenti saat status hari ini ditandai Sudah Diisi.
+            Memutar audio pengingat kustom &amp; berhenti otomatis saat Monev terisi.
           </p>
         </div>
         <button
