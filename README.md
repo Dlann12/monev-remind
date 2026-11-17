@@ -146,4 +146,4 @@ Build APK berjalan otomatis melalui GitHub Actions (`.github/workflows/build-and
 
 ### Catatan Penggunaan di Perangkat Android
 - **Izin Latar Belakang**: Agar alarm pengingat dan **Auto-Isi 23:00** berjalan tepat waktu saat layar mati atau aplikasi tertutup, izinkan **Notifikasi**, **Alarm & Pengingat**, serta atur penggunaan baterai aplikasi ke **Tidak dibatasi (*Unrestricted*)** di pengaturan Android.
-- **Prasyarat Auto-Isi**: Fitur auto-isi menyalin log harian terakhir yang tersedia pada akun Anda di portal Monev, sehingga minimal harus sudah pernah mengisi minimal 1 log kegiatan sebelumnya dan sesi login MagangHub masih aktif.
+- **Prasyarat Auto-Isi**: Fitur auto-isi menyalin log harian terakhir yang tersedia pada akun Anda di portal Monev, sehingga minimal sudah pernah mengisi 1 log kegiatan sebelumnya dan sesi login MagangHub masih aktif.
