@@ -232,7 +232,7 @@ const lastSyncLabel = computed(() => {
           @click="emit('openQuickFill')"
         >
           <span class="material-symbols-outlined text-[19px]">bolt</span>
-          <span>Isi Cepat (Salin Kegiatan Kemarin)</span>
+          <span>Isi Cepat (Salin / Auto-Generate)</span>
         </button>
 
         <button

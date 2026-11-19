@@ -13,7 +13,7 @@ export async function sendTelegramReminder(
   if (!token || !chat) {
     return { ok: false, error: 'Bot Token atau Chat ID belum diisi.' }
   }
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     return { ok: false, error: 'Perangkat sedang offline. Pesan Telegram ditunda.' }
   }
 

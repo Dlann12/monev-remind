@@ -20,10 +20,20 @@ import {
   findLatestDailyLogPayload,
   mapOffDaysToWorkDays,
   normalizeDailyLogDraftForSubmit,
+  normalizeProfilePhotoUrl,
   parseMonevAttendancesPayload,
   parseMonevHomePayload,
   parseMonevUserPayload
 } from '@/services/monevPortalService'
+import {
+  isValidWhatsAppPhone,
+  normalizeIndonesianPhone,
+  sendWhatsAppReminder
+} from '@/services/whatsappService'
+import {
+  detectMonevCategory,
+  generateMonevFromShortActivity
+} from '@/utils/monevGenerator'
 
 describe('Workday, holiday, 17:00 catch-up, and 23:00 auto-fill logic', () => {
   it('marks Monday-Friday as active workdays when not a holiday', () => {
@@ -487,5 +497,116 @@ describe('autoSubmitMonevFromYesterday fetch flow', () => {
     expect(postedBody!.activity_log!.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
     expect(postedBody!.lesson_learned!.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
     expect(postedBody!.obstacles!.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+  })
+})
+
+describe('Profile photo URL normalization and cached Base64 priority', () => {
+  it('prefers cached photo_data_url and normalizes relative or http Kemnaker photo URLs', () => {
+    expect(normalizeProfilePhotoUrl('/uploads/avatar.jpg')).toBe(
+      'https://monev.maganghub.kemnaker.go.id/uploads/avatar.jpg'
+    )
+    expect(normalizeProfilePhotoUrl('http://cdn.kemnaker.go.id/a.png')).toBe(
+      'https://cdn.kemnaker.go.id/a.png'
+    )
+    const parsedCached = parseMonevUserPayload({
+      data: {
+        name: 'Budi Santoso',
+        photo_url: 'https://cdn.kemnaker.go.id/slow.jpg',
+        photo_data_url: 'data:image/jpeg;base64,ABC123'
+      }
+    })
+    expect(parsedCached?.photoUrl).toBe('data:image/jpeg;base64,ABC123')
+  })
+})
+
+describe('Offline Monev Auto-Generator', () => {
+  it('detects activity categories and generates >= 100-char multi-sentence entries with variations', () => {
+    expect(detectMonevCategory('bikin fitur login dan integrasi API')).toBe('coding')
+    expect(detectMonevCategory('meeting sprint mingguan bersama mentor')).toBe('meeting')
+    expect(detectMonevCategory('rekap data excel laporan bulanan')).toBe('data')
+
+    const v0 = generateMonevFromShortActivity({
+      shortActivity: 'bikin halaman login dan fix bug api',
+      shortObstacle: 'sempat terkendala error CORS',
+      role: 'Frontend Intern',
+      company: 'PT Telkom',
+      variant: 0
+    })
+    const v1 = generateMonevFromShortActivity({
+      shortActivity: 'bikin halaman login dan fix bug api',
+      variant: 1
+    })
+
+    expect(v0.activity_log.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+    expect(v0.lesson_learned.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+    expect(v0.obstacles.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+    expect(v0.activity_log).toContain('bikin halaman login dan fix bug api')
+    expect(v0.obstacles).toContain('sempat terkendala error CORS')
+    expect(v0.activity_log).not.toBe(v1.activity_log)
+  })
+})
+
+describe('WhatsApp Bot Reminder service', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('normalizes Indonesian phone numbers accurately', () => {
+    expect(normalizeIndonesianPhone('0812-3456-7890')).toBe('6281234567890')
+    expect(normalizeIndonesianPhone('+62 812 3456 7890')).toBe('6281234567890')
+    expect(normalizeIndonesianPhone('81234567890')).toBe('6281234567890')
+    expect(isValidWhatsAppPhone('081234567890')).toBe(true)
+    expect(isValidWhatsAppPhone('12345')).toBe(false)
+  })
+
+  it('dispatches CallMeBot, Fonnte, and Relay requests correctly', async () => {
+    let lastUrl = ''
+    let lastInit: RequestInit | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        lastUrl = String(input)
+        lastInit = init
+        if (lastUrl.includes('fonnte.com')) {
+          return new Response(JSON.stringify({ status: false, reason: 'invalid token' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      })
+    )
+
+    const cmb = await sendWhatsAppReminder(
+      { enabled: true, provider: 'callmebot', phone: '081234567890', apiKey: '998877' },
+      'Jangan lupa isi monev!'
+    )
+    expect(cmb.ok).toBe(true)
+    expect(lastUrl).toContain('api.callmebot.com/whatsapp.php?phone=+6281234567890')
+
+    const fonnte = await sendWhatsAppReminder(
+      { enabled: true, provider: 'fonnte', phone: '081234567890', apiKey: 'bad-token' },
+      'Jangan lupa isi monev!'
+    )
+    expect(fonnte.ok).toBe(false)
+    expect(fonnte.error).toContain('invalid token')
+
+    const relay = await sendWhatsAppReminder(
+      {
+        enabled: true,
+        provider: 'relay',
+        phone: '081234567890',
+        apiKey: 'secret123',
+        webhookUrl: 'https://bot.example.com/api/wa/send'
+      },
+      'Pengingat Monev 17:00'
+    )
+    expect(relay.ok).toBe(true)
+    expect(lastUrl).toBe('https://bot.example.com/api/wa/send')
+    expect(JSON.parse(String(lastInit?.body))).toEqual({
+      phone: '6281234567890',
+      message: 'Pengingat Monev 17:00',
+      source: 'maganghub-reminder'
+    })
   })
 })

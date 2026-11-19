@@ -12,6 +12,8 @@ export type PortalSyncState =
   | 'session_expired'
   | 'unavailable'
 
+export type WhatsAppProvider = 'relay' | 'callmebot' | 'fonnte' | 'webhook'
+
 export interface InternProfile {
   id: 'default'
   portalUserId: string
@@ -24,6 +26,11 @@ export interface InternProfile {
   portalUrl: string
   telegramBotToken: string
   telegramChatId: string
+  whatsappEnabled: boolean
+  whatsappProvider: WhatsAppProvider
+  whatsappPhone: string
+  whatsappApiKey: string
+  whatsappWebhookUrl: string
   sessionLastVerifiedAt: string | null
   sessionTimeoutHours: number
   portalSyncState: PortalSyncState

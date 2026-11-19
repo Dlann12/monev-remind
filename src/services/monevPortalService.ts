@@ -22,6 +22,10 @@ export interface MonevUserApiPayload {
   internship_position?: string
   position?: string
   photo_url?: string
+  photo_data_url?: string
+  avatar_url?: string
+  avatar?: string
+  photo?: string
   internship_start_date?: string
   internship_end_date?: string
   internship_location_province_code?: string
@@ -183,10 +187,24 @@ interface MonevSyncPlugin {
   openDeviceAlarmSettings(options?: {
     target?: 'exact_alarm' | 'battery'
   }): Promise<void>
+  sendWhatsAppMessage(options: {
+    provider: string
+    phone: string
+    apiKey: string
+    webhookUrl: string
+    message: string
+  }): Promise<{ ok: boolean; httpStatus?: number; error?: string }>
+  saveWhatsAppConfig(options: {
+    enabled: boolean
+    provider: string
+    phone: string
+    apiKey: string
+    webhookUrl: string
+  }): Promise<void>
   clearPortalSession(): Promise<void>
 }
 
-const MonevSync = registerPlugin<MonevSyncPlugin>('MonevSync')
+export const MonevSync = registerPlugin<MonevSyncPlugin>('MonevSync')
 
 export interface MonevStatusCheckResult {
   outcome:
@@ -305,6 +323,21 @@ export function computeInitials(name: string): string {
   return initials || 'MH'
 }
 
+export function normalizeProfilePhotoUrl(rawUrl?: string | null): string {
+  const cleaned = (rawUrl || '').trim()
+  if (!cleaned) return ''
+  if (cleaned.startsWith('data:image/')) return cleaned
+  if (cleaned.startsWith('//')) return `https:${cleaned}`
+  if (/^http:\/\/[^/]*kemnaker\.go\.id/i.test(cleaned)) {
+    return cleaned.replace(/^http:\/\//i, 'https://')
+  }
+  if (/^https?:\/\//i.test(cleaned)) return cleaned
+  if (cleaned.startsWith('/')) {
+    return `https://monev.maganghub.kemnaker.go.id${cleaned}`
+  }
+  return `https://monev.maganghub.kemnaker.go.id/${cleaned}`
+}
+
 export function parseMonevUserPayload(
   raw: MonevUserApiPayload | null | undefined
 ): SyncedMonevProfile | undefined {
@@ -323,6 +356,13 @@ export function parseMonevUserPayload(
       ? 'Peserta MagangHub'
       : u?.user_type?.trim() || 'Peserta MagangHub')
 
+  const cachedDataUrl = u?.photo_data_url?.trim() || ''
+  const resolvedPhotoUrl = cachedDataUrl.startsWith('data:image/')
+    ? cachedDataUrl
+    : normalizeProfilePhotoUrl(
+        u?.photo_url || u?.avatar_url || u?.avatar || u?.photo || ''
+      )
+
   return {
     portalUserId: u?.id ? String(u.id) : '',
     name,
@@ -330,7 +370,7 @@ export function parseMonevUserPayload(
     role,
     company,
     batch: formatShortPeriod(u?.internship_start_date, u?.internship_end_date),
-    photoUrl: u?.photo_url?.trim() || '',
+    photoUrl: resolvedPhotoUrl,
     startDate: u?.internship_start_date?.slice(0, 10) || '',
     endDate: u?.internship_end_date?.slice(0, 10) || '',
     provinceCode: u?.internship_location_province_code?.trim() || '',

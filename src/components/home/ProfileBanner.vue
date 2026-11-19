@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import ProfileAvatar from '@/components/common/ProfileAvatar.vue'
 import type { InternProfile, ScheduleConfig } from '@/types/app'
 import { formatIndonesianDate } from '@/utils/dateTime'
 
@@ -47,17 +48,13 @@ const isConnected = computed(() => props.profile.portalSyncState === 'connected'
         class="flex-shrink-0 rounded-full focus:outline-none"
         @click="emit('openConnectModal')"
       >
-        <div
-          class="w-11 h-11 rounded-full bg-secondary-fixed/40 flex items-center justify-center text-secondary font-title-md text-title-md overflow-hidden"
-        >
-          <img
-            v-if="profile.photoUrl && isConnected"
-            :src="profile.photoUrl"
-            :alt="profile.name"
-            class="w-full h-full object-cover"
-          />
-          <span v-else>{{ profile.initials }}</span>
-        </div>
+        <ProfileAvatar
+          :src="isConnected ? profile.photoUrl : ''"
+          :alt="profile.name"
+          :initials="profile.initials"
+          size-class="w-11 h-11"
+          bg-class="bg-secondary-fixed/40 text-secondary"
+        />
       </button>
     </div>
 

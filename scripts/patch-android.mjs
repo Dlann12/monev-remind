@@ -83,8 +83,12 @@ const monevApiHelperJava = `package id.go.kemnaker.maganghub.reminder;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.util.Base64;
 import android.webkit.CookieManager;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -638,6 +642,237 @@ final class MonevApiHelper {
         return new HttpResult(status, sb.toString(), setCookies);
     }
 
+    static String fetchPhotoDataUrl(String rawUrl, String cookies, String bearerToken) {
+        if (rawUrl == null || rawUrl.trim().isEmpty()) return "";
+        String currentUrl = rawUrl.trim();
+        if (currentUrl.startsWith("data:image/")) return currentUrl;
+        if (currentUrl.startsWith("//")) {
+            currentUrl = "https:" + currentUrl;
+        } else if (!currentUrl.startsWith("http://") && !currentUrl.startsWith("https://")) {
+            currentUrl = currentUrl.startsWith("/") ? (WEB_ORIGIN + currentUrl) : (WEB_ORIGIN + "/" + currentUrl);
+        }
+
+        try {
+            byte[] imageBytes = null;
+            for (int hop = 0; hop < 4; hop++) {
+                URL url = new URL(currentUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(6000);
+                conn.setReadTimeout(8000);
+                conn.setInstanceFollowRedirects(false);
+                conn.setRequestProperty("Accept", "image/*,*/*;q=0.8");
+                conn.setRequestProperty("Referer", WEB_ORIGIN + "/");
+                String host = url.getHost() != null ? url.getHost().toLowerCase(Locale.US) : "";
+                if (host.endsWith("kemnaker.go.id")) {
+                    if (cookies != null && !cookies.isEmpty()) {
+                        conn.setRequestProperty("Cookie", cookies);
+                    }
+                    if (bearerToken != null && !bearerToken.isEmpty()) {
+                        conn.setRequestProperty("Authorization", "Bearer " + bearerToken);
+                    }
+                }
+
+                int status = conn.getResponseCode();
+                if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+                    String loc = conn.getHeaderField("Location");
+                    conn.disconnect();
+                    if (loc == null || loc.trim().isEmpty()) return "";
+                    currentUrl = new URL(url, loc.trim()).toString();
+                    continue;
+                }
+
+                if (status < 200 || status >= 300) {
+                    conn.disconnect();
+                    return "";
+                }
+
+                try (InputStream is = conn.getInputStream();
+                     ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                    byte[] buf = new byte[8192];
+                    int read;
+                    int total = 0;
+                    final int maxBytes = 3 * 1024 * 1024;
+                    while ((read = is.read(buf)) != -1) {
+                        total += read;
+                        if (total > maxBytes) {
+                            conn.disconnect();
+                            return "";
+                        }
+                        baos.write(buf, 0, read);
+                    }
+                    imageBytes = baos.toByteArray();
+                } finally {
+                    conn.disconnect();
+                }
+                break;
+            }
+
+            if (imageBytes == null || imageBytes.length == 0) return "";
+
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length, bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return "";
+
+            int targetSize = 160;
+            int sampleSize = 1;
+            while ((bounds.outWidth / (sampleSize * 2)) >= targetSize
+                && (bounds.outHeight / (sampleSize * 2)) >= targetSize) {
+                sampleSize *= 2;
+            }
+
+            BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
+            decodeOpts.inSampleSize = sampleSize;
+            Bitmap decoded = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length, decodeOpts);
+            if (decoded == null) return "";
+
+            int w = decoded.getWidth();
+            int h = decoded.getHeight();
+            int side = Math.min(w, h);
+            int x = Math.max(0, (w - side) / 2);
+            int y = Math.max(0, (h - side) / 2);
+            Bitmap cropped = Bitmap.createBitmap(decoded, x, y, side, side);
+            if (cropped != decoded) decoded.recycle();
+
+            Bitmap scaled = side > targetSize
+                ? Bitmap.createScaledBitmap(cropped, targetSize, targetSize, true)
+                : cropped;
+            if (scaled != cropped) cropped.recycle();
+
+            ByteArrayOutputStream jpegOut = new ByteArrayOutputStream();
+            scaled.compress(Bitmap.CompressFormat.JPEG, 82, jpegOut);
+            scaled.recycle();
+
+            return "data:image/jpeg;base64," + Base64.encodeToString(jpegOut.toByteArray(), Base64.NO_WRAP);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    static WhatsAppResult sendWhatsAppMessage(
+        String provider,
+        String phone,
+        String apiKey,
+        String webhookUrl,
+        String message
+    ) {
+        if (phone == null || phone.trim().isEmpty()) {
+            return new WhatsAppResult(false, 0, "Nomor WhatsApp kosong.");
+        }
+        String cleanPhone = phone.replaceAll("[^0-9]", "");
+        String cleanProvider = provider != null ? provider.trim().toLowerCase(Locale.US) : "callmebot";
+        String cleanKey = apiKey != null ? apiKey.trim() : "";
+        String cleanUrl = webhookUrl != null ? webhookUrl.trim() : "";
+        String cleanMsg = message != null ? message : "";
+
+        HttpURLConnection conn = null;
+        try {
+            if ("callmebot".equals(cleanProvider)) {
+                if (cleanKey.isEmpty()) {
+                    return new WhatsAppResult(false, 0, "API Key CallMeBot belum diisi.");
+                }
+                String urlStr = "https://api.callmebot.com/whatsapp.php?phone="
+                    + URLEncoder.encode("+" + cleanPhone, "UTF-8")
+                    + "&text=" + URLEncoder.encode(cleanMsg, "UTF-8")
+                    + "&apikey=" + URLEncoder.encode(cleanKey, "UTF-8");
+                conn = (HttpURLConnection) new URL(urlStr).openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(12000);
+            } else if ("fonnte".equals(cleanProvider)) {
+                if (cleanKey.isEmpty()) {
+                    return new WhatsAppResult(false, 0, "Token Fonnte belum diisi.");
+                }
+                conn = (HttpURLConnection) new URL("https://api.fonnte.com/send").openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(12000);
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Authorization", cleanKey);
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+                String form = "target=" + URLEncoder.encode(cleanPhone, "UTF-8")
+                    + "&message=" + URLEncoder.encode(cleanMsg, "UTF-8")
+                    + "&countryCode=62";
+                byte[] bytes = form.getBytes(StandardCharsets.UTF_8);
+                conn.setFixedLengthStreamingMode(bytes.length);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(bytes);
+                }
+            } else {
+                if (cleanUrl.isEmpty()) {
+                    return new WhatsAppResult(false, 0, "URL Server Bot / Webhook WA belum diisi.");
+                }
+                conn = (HttpURLConnection) new URL(cleanUrl).openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(12000);
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                if (!cleanKey.isEmpty()) {
+                    conn.setRequestProperty("Authorization", "Bearer " + cleanKey);
+                }
+                JSONObject payload = new JSONObject();
+                payload.put("phone", cleanPhone);
+                payload.put("message", cleanMsg);
+                payload.put("source", "maganghub-reminder");
+                byte[] bytes = payload.toString().getBytes(StandardCharsets.UTF_8);
+                conn.setFixedLengthStreamingMode(bytes.length);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(bytes);
+                }
+            }
+
+            int status = conn.getResponseCode();
+            InputStream stream = status >= 200 && status < 400
+                ? conn.getInputStream()
+                : conn.getErrorStream();
+            StringBuilder sb = new StringBuilder();
+            if (stream != null) {
+                try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(stream, StandardCharsets.UTF_8)
+                )) {
+                    String line;
+                    while ((line = reader.readLine()) != null && sb.length() < 500) {
+                        sb.append(line);
+                    }
+                }
+            }
+
+            String respBody = sb.toString();
+            if (status < 200 || status >= 300) {
+                return new WhatsAppResult(false, status, "HTTP " + status + (respBody.isEmpty() ? "" : ": " + respBody));
+            }
+            if ("fonnte".equals(cleanProvider) && respBody.startsWith("{")) {
+                try {
+                    JSONObject obj = new JSONObject(respBody);
+                    if (obj.has("status") && !obj.optBoolean("status", true)) {
+                        return new WhatsAppResult(false, status, obj.optString("reason", "Fonnte menolak pesan."));
+                    }
+                } catch (Exception ignored) {
+                    // Ignore malformed JSON body
+                }
+            }
+            return new WhatsAppResult(true, status, "");
+        } catch (Exception ex) {
+            return new WhatsAppResult(false, 0, ex.getMessage() != null ? ex.getMessage() : "Gagal menghubungi gateway WhatsApp.");
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    static final class WhatsAppResult {
+        final boolean ok;
+        final int httpStatus;
+        final String error;
+
+        WhatsAppResult(boolean ok, int httpStatus, String error) {
+            this.ok = ok;
+            this.httpStatus = httpStatus;
+            this.error = error;
+        }
+    }
+
     static final class AuthContext {
         final String state;
         final String reason;
@@ -838,7 +1073,33 @@ public class MonevSyncPlugin extends Plugin {
                         userObj.put("internship_company", u.optString("internship_company", ""));
                         userObj.put("internship_position", u.optString("internship_position", ""));
                         userObj.put("position", u.optString("position", ""));
-                        userObj.put("photo_url", u.optString("photo_url", ""));
+                        String rawPhotoUrl = u.optString("photo_url", "");
+                        if (rawPhotoUrl.isEmpty()) rawPhotoUrl = u.optString("avatar_url", "");
+                        if (rawPhotoUrl.isEmpty()) rawPhotoUrl = u.optString("avatar", "");
+                        if (rawPhotoUrl.isEmpty()) rawPhotoUrl = u.optString("photo", "");
+                        userObj.put("photo_url", rawPhotoUrl);
+                        if (!rawPhotoUrl.isEmpty()) {
+                            SharedPreferences photoPrefs = getContext().getSharedPreferences(
+                                MonevApiHelper.PREFS_NAME, Context.MODE_PRIVATE
+                            );
+                            String cachedUrl = photoPrefs.getString("cached_photo_url", "");
+                            String cachedData = photoPrefs.getString("cached_photo_data_url", "");
+                            String photoDataUrl;
+                            if (rawPhotoUrl.equals(cachedUrl) && !cachedData.isEmpty()) {
+                                photoDataUrl = cachedData;
+                            } else {
+                                photoDataUrl = MonevApiHelper.fetchPhotoDataUrl(rawPhotoUrl, apiCookies, token);
+                                if (!photoDataUrl.isEmpty()) {
+                                    photoPrefs.edit()
+                                        .putString("cached_photo_url", rawPhotoUrl)
+                                        .putString("cached_photo_data_url", photoDataUrl)
+                                        .apply();
+                                }
+                            }
+                            if (!photoDataUrl.isEmpty()) {
+                                userObj.put("photo_data_url", photoDataUrl);
+                            }
+                        }
                         userObj.put("internship_start_date", startRaw);
                         userObj.put("internship_end_date", endRaw);
                         userObj.put("internship_location_province_code", u.optString("internship_location_province_code", ""));
@@ -998,6 +1259,47 @@ public class MonevSyncPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void sendWhatsAppMessage(final PluginCall call) {
+        final String provider = call.getString("provider", "callmebot");
+        final String phone = call.getString("phone", "");
+        final String apiKey = call.getString("apiKey", "");
+        final String webhookUrl = call.getString("webhookUrl", "");
+        final String message = call.getString("message", "");
+
+        executor.execute(() -> {
+            MonevApiHelper.WhatsAppResult result = MonevApiHelper.sendWhatsAppMessage(
+                provider, phone, apiKey, webhookUrl, message
+            );
+            JSObject res = new JSObject();
+            res.put("ok", result.ok);
+            res.put("httpStatus", result.httpStatus);
+            res.put("error", result.error);
+            call.resolve(res);
+        });
+    }
+
+    @PluginMethod
+    public void saveWhatsAppConfig(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        String provider = call.getString("provider", "callmebot");
+        String phone = call.getString("phone", "");
+        String apiKey = call.getString("apiKey", "");
+        String webhookUrl = call.getString("webhookUrl", "");
+
+        SharedPreferences prefs = getContext().getSharedPreferences(
+            MonevApiHelper.PREFS_NAME, Context.MODE_PRIVATE
+        );
+        prefs.edit()
+            .putBoolean("wa_enabled", enabled)
+            .putString("wa_provider", provider != null ? provider : "callmebot")
+            .putString("wa_phone", phone != null ? phone : "")
+            .putString("wa_api_key", apiKey != null ? apiKey : "")
+            .putString("wa_webhook_url", webhookUrl != null ? webhookUrl : "")
+            .apply();
+        call.resolve();
+    }
+
+    @PluginMethod
     public void clearPortalSession(PluginCall call) {
         CookieManager.getInstance().removeSessionCookies(null);
         CookieManager.getInstance().removeAllCookies(null);
@@ -1084,29 +1386,36 @@ public class AutoMonevReceiver extends BroadcastReceiver {
                     context, "", todayStr, "", "", ""
                 );
                 if ("submitted".equals(res.state)) {
-                    postNotification(
-                        context,
-                        "Auto-Isi Monev " + timeLabel + " Berhasil",
-                        res.message
-                    );
+                    String notifTitle = "Auto-Isi Monev " + timeLabel + " Berhasil";
+                    postNotification(context, notifTitle, res.message);
+                    dispatchBackgroundWhatsApp(prefs, notifTitle, res.message);
                 } else if ("session_expired".equals(res.state)) {
-                    postNotification(
-                        context,
-                        "Auto-Isi Monev " + timeLabel + " Gagal (Sesi Habis)",
-                        "Login ulang ke MagangHub agar pengisian otomatis aktif kembali."
-                    );
+                    String notifTitle = "Auto-Isi Monev " + timeLabel + " Gagal (Sesi Habis)";
+                    String notifBody = "Login ulang ke MagangHub agar pengisian otomatis aktif kembali.";
+                    postNotification(context, notifTitle, notifBody);
+                    dispatchBackgroundWhatsApp(prefs, notifTitle, notifBody);
                 } else if ("no_previous_log".equals(res.state)) {
-                    postNotification(
-                        context,
-                        "Auto-Isi Monev " + timeLabel + " Dilewati",
-                        "Belum ada catatan kegiatan sebelumnya untuk disalin otomatis."
-                    );
+                    String notifTitle = "Auto-Isi Monev " + timeLabel + " Dilewati";
+                    String notifBody = "Belum ada catatan kegiatan sebelumnya untuk disalin otomatis.";
+                    postNotification(context, notifTitle, notifBody);
+                    dispatchBackgroundWhatsApp(prefs, notifTitle, notifBody);
                 }
             } finally {
                 scheduleNext(context);
                 pendingResult.finish();
             }
         });
+    }
+
+    private static void dispatchBackgroundWhatsApp(SharedPreferences prefs, String title, String body) {
+        if (!prefs.getBoolean("wa_enabled", false)) return;
+        String phone = prefs.getString("wa_phone", "");
+        if (phone == null || phone.trim().isEmpty()) return;
+        String provider = prefs.getString("wa_provider", "callmebot");
+        String apiKey = prefs.getString("wa_api_key", "");
+        String webhookUrl = prefs.getString("wa_webhook_url", "");
+        String msg = "*[MagangHub Reminder]*\\n" + title + "\\n" + body + "\\nPortal: https://monev.maganghub.kemnaker.go.id/dashboard";
+        MonevApiHelper.sendWhatsAppMessage(provider, phone, apiKey, webhookUrl, msg);
     }
 
     static void scheduleNext(Context context) {

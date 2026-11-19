@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import ProfileAvatar from '@/components/common/ProfileAvatar.vue'
 import type { InternProfile } from '@/types/app'
 
 interface Props {
@@ -107,17 +108,13 @@ const syncTimeLabel = computed(() => {
         <!-- Synced Read-Only Profile Details -->
         <div class="bg-surface-container-low rounded-xl p-3.5 space-y-3">
           <div class="flex items-center gap-3">
-            <div
-              class="w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center font-title-md text-title-md overflow-hidden flex-shrink-0"
-            >
-              <img
-                v-if="profile.photoUrl && isConnected"
-                :src="profile.photoUrl"
-                :alt="profile.name"
-                class="w-full h-full object-cover"
-              />
-              <span v-else>{{ profile.initials }}</span>
-            </div>
+            <ProfileAvatar
+              :src="isConnected ? profile.photoUrl : ''"
+              :alt="profile.name"
+              :initials="profile.initials"
+              size-class="w-12 h-12"
+              bg-class="bg-primary text-on-primary"
+            />
             <div class="min-w-0">
               <p class="font-title-md text-title-md text-on-surface truncate">
                 {{ profile.name }}

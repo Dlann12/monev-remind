@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import ProfileAvatar from '@/components/common/ProfileAvatar.vue'
 import type { AppTab, PortalSyncState } from '@/types/app'
 
 interface Props {
@@ -88,19 +89,13 @@ const statusDotClass = computed(() => {
           class="relative flex items-center justify-center rounded-full focus:outline-none"
           @click="emit('openProfile')"
         >
-          <div
-            class="w-8 h-8 rounded-full bg-primary flex items-center justify-center shadow-sm overflow-hidden"
-          >
-            <img
-              v-if="photoUrl"
-              :src="photoUrl"
-              alt="Avatar MagangHub"
-              class="w-full h-full object-cover"
-            />
-            <span v-else class="material-symbols-outlined text-on-primary text-[18px]">
-              person
-            </span>
-          </div>
+          <ProfileAvatar
+            :src="photoUrl"
+            alt="Avatar MagangHub"
+            size-class="w-8 h-8 shadow-sm"
+            bg-class="bg-primary text-on-primary"
+            icon-size-class="text-[18px]"
+          />
           <span
             class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-surface"
             :class="statusDotClass"
