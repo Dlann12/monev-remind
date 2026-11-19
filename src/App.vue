@@ -14,7 +14,7 @@ import QuickFillModal from '@/components/modals/QuickFillModal.vue'
 import { useMagangStore } from '@/composables/useMagangStore'
 import { useReminderEngine } from '@/composables/useReminderEngine'
 import type { LatestDailyLogDraft } from '@/services/monevPortalService'
-import type { AppTab, WhatsAppProvider } from '@/types/app'
+import type { AppTab } from '@/types/app'
 
 const store = useMagangStore()
 const reminder = useReminderEngine()
@@ -86,35 +86,11 @@ async function handleTestAlarm() {
     body: res.body,
     isSessionWarning: store.isSessionExpired.value
   })
-  if (res.whatsappResult && !res.whatsappResult.ok) {
-    showToast(`Alarm lokal berbunyi. WhatsApp: ${res.whatsappResult.error}`)
-    return
-  }
   if (res.telegramResult && !res.telegramResult.ok) {
     showToast(`Alarm lokal berbunyi. Telegram: ${res.telegramResult.error}`)
     return
   }
-  showToast(
-    res.whatsappResult?.ok
-      ? 'Alarm lokal berbunyi & pengingat WhatsApp terkirim!'
-      : 'Alarm pengingat Monev dipicu!'
-  )
-}
-
-async function handleTestWhatsApp(config: {
-  whatsappEnabled: boolean
-  whatsappProvider: WhatsAppProvider
-  whatsappPhone: string
-  whatsappApiKey: string
-  whatsappWebhookUrl: string
-}) {
-  showToast('Mengirim pesan uji coba ke WhatsApp...')
-  const res = await store.testWhatsAppReminder(config)
-  if (res.ok) {
-    showToast('Pesan uji coba WhatsApp berhasil terkirim!')
-  } else {
-    showToast(`Gagal kirim WA: ${res.error || 'Periksa konfigurasi.'}`)
-  }
+  showToast('Alarm pengingat Monev dipicu!')
 }
 </script>
 
@@ -191,7 +167,6 @@ async function handleTestWhatsApp(config: {
           @update-alarm-time="(id, time) => store.updateAlarmTime(id, time)"
           @toggle-holiday-today="store.toggleHolidayToday()"
           @test-alarm="handleTestAlarm"
-          @test-whatsapp="handleTestWhatsApp"
           @update-profile="store.updateProfile($event)"
         />
 

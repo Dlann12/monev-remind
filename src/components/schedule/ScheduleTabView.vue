@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, shallowRef, watch } from 'vue'
+import { onMounted, onUnmounted, shallowRef, watch } from 'vue'
 import {
   isNativePlatform,
   registerAppResumeListener
@@ -9,20 +9,11 @@ import {
   openDeviceAlarmPermissionSettings,
   type DeviceAlarmPermissions
 } from '@/services/monevPortalService'
-import {
-  CALLMEBOT_BOT_PHONE,
-  CALLMEBOT_GUIDE_URL,
-  DEFAULT_WA_RELAY_URL,
-  getCallMeBotActivationUrl,
-  isValidWhatsAppPhone,
-  normalizeIndonesianPhone
-} from '@/services/whatsappService'
 import type {
   AlarmRule,
   InternProfile,
   ScheduleConfig,
-  TimezoneLabel,
-  WhatsAppProvider
+  TimezoneLabel
 } from '@/types/app'
 
 interface Props {
@@ -39,15 +30,6 @@ interface Emits {
   updateAlarmTime: [alarmId: string, time: string]
   toggleHolidayToday: []
   testAlarm: []
-  testWhatsapp: [
-    config: {
-      whatsappEnabled: boolean
-      whatsappProvider: WhatsAppProvider
-      whatsappPhone: string
-      whatsappApiKey: string
-      whatsappWebhookUrl: string
-    }
-  ]
   updateProfile: [patch: Partial<InternProfile>]
 }
 
@@ -71,43 +53,6 @@ const autoFillTime = shallowRef(props.schedule.autoFillTime || '23:00')
 const botToken = shallowRef(props.profile.telegramBotToken)
 const chatId = shallowRef(props.profile.telegramChatId)
 const telegramSavedMsg = shallowRef('')
-
-const waEnabled = shallowRef(Boolean(props.profile.whatsappEnabled))
-const waProvider = shallowRef<WhatsAppProvider>(
-  props.profile.whatsappProvider || (DEFAULT_WA_RELAY_URL ? 'relay' : 'callmebot')
-)
-const waPhone = shallowRef(props.profile.whatsappPhone || '')
-const waApiKey = shallowRef(props.profile.whatsappApiKey || '')
-const waWebhookUrl = shallowRef(
-  props.profile.whatsappWebhookUrl || DEFAULT_WA_RELAY_URL
-)
-const waSavedMsg = shallowRef('')
-
-const waProviderOptions: ReadonlyArray<{ id: WhatsAppProvider; label: string }> = [
-  { id: 'callmebot', label: 'CallMeBot (Gratis)' },
-  { id: 'fonnte', label: 'Fonnte' },
-  { id: 'relay', label: 'Server Bot WA' },
-  { id: 'webhook', label: 'Webhook' }
-]
-
-const normalizedWaPhone = computed(() => normalizeIndonesianPhone(waPhone.value))
-const isWaPhoneValid = computed(() => isValidWhatsAppPhone(waPhone.value))
-const hasBuiltInRelay = Boolean(DEFAULT_WA_RELAY_URL)
-const callMeBotUrl = getCallMeBotActivationUrl()
-
-watch(
-  () => props.profile,
-  (p) => {
-    waEnabled.value = Boolean(p.whatsappEnabled)
-    waProvider.value =
-      p.whatsappProvider || (DEFAULT_WA_RELAY_URL ? 'relay' : 'callmebot')
-    waPhone.value = p.whatsappPhone || ''
-    waApiKey.value = p.whatsappApiKey || ''
-    waWebhookUrl.value = p.whatsappWebhookUrl || DEFAULT_WA_RELAY_URL
-  },
-  { deep: false }
-)
-
 const isNative = isNativePlatform()
 const devicePerms = shallowRef<DeviceAlarmPermissions>({
   canScheduleExactAlarms: true,
@@ -175,33 +120,6 @@ function handleAlarmTimeInput(
   const nextTime = (event.target as HTMLInputElement).value
   if (!/^\d{2}:\d{2}$/.test(nextTime) || nextTime === currentTime) return
   emit('updateAlarmTime', alarmId, nextTime)
-}
-
-function saveWhatsAppConfig() {
-  emit('updateProfile', {
-    whatsappEnabled: waEnabled.value,
-    whatsappProvider: waProvider.value,
-    whatsappPhone: waPhone.value.trim(),
-    whatsappApiKey: waApiKey.value.trim(),
-    whatsappWebhookUrl: waWebhookUrl.value.trim()
-  })
-  waSavedMsg.value = 'Konfigurasi Bot WhatsApp tersimpan di perangkat.'
-  setTimeout(() => {
-    waSavedMsg.value = ''
-  }, 3000)
-}
-
-function handleTestWhatsApp() {
-  const payload = {
-    whatsappEnabled: true,
-    whatsappProvider: waProvider.value,
-    whatsappPhone: waPhone.value.trim(),
-    whatsappApiKey: waApiKey.value.trim(),
-    whatsappWebhookUrl: waWebhookUrl.value.trim()
-  }
-  waEnabled.value = true
-  emit('updateProfile', payload)
-  emit('testWhatsapp', payload)
 }
 
 function saveTelegramConfig() {
@@ -518,185 +436,6 @@ function saveTelegramConfig() {
               class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow transition mt-0.5 ml-0.5"
               :class="alarm.enabled ? 'translate-x-5' : 'translate-x-0'"
             />
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Bot Pengingat WhatsApp -->
-    <div class="bg-surface-container-lowest rounded-xl p-space-md shadow-sm space-y-3">
-      <div class="flex items-start justify-between gap-3">
-        <div>
-          <h3 class="font-title-md text-title-md text-on-surface flex items-center gap-1.5">
-            <span class="material-symbols-outlined text-[19px] text-secondary">chat</span>
-            <span>Bot Pengingat WhatsApp</span>
-          </h3>
-          <p class="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
-            Kirim pesan pengingat otomatis ke WhatsApp saat alarm {{ schedule.monevCheckTime }}, snooze, maupun hasil Auto-Isi {{ schedule.autoFillTime || '23:00' }}.
-          </p>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          :aria-checked="waEnabled"
-          class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full transition-colors"
-          :class="waEnabled ? 'bg-secondary' : 'bg-outline-variant'"
-          @click="
-            () => {
-              waEnabled = !waEnabled
-              saveWhatsAppConfig()
-            }
-          "
-        >
-          <span
-            class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow transition mt-0.5 ml-0.5"
-            :class="waEnabled ? 'translate-x-5' : 'translate-x-0'"
-          />
-        </button>
-      </div>
-
-      <!-- Provider selector -->
-      <div class="grid grid-cols-2 gap-1.5">
-        <button
-          v-for="prov in waProviderOptions"
-          :key="prov.id"
-          type="button"
-          class="py-1.5 px-2.5 rounded-lg font-label-sm text-label-sm transition-colors text-center"
-          :class="
-            waProvider === prov.id
-              ? 'bg-primary text-on-primary shadow-xs'
-              : 'bg-surface-container-low text-on-surface-variant'
-          "
-          @click="waProvider = prov.id"
-        >
-          {{ prov.label }}
-        </button>
-      </div>
-
-      <div class="space-y-2">
-        <div>
-          <input
-            v-model="waPhone"
-            type="tel"
-            placeholder="Nomor WhatsApp (mis. 081234567890)"
-            class="w-full bg-surface-container-low rounded-lg px-3 py-2.5 font-body-sm text-body-sm text-on-surface placeholder:text-outline focus:outline-none focus:ring-2 focus:ring-secondary/40"
-          />
-          <p
-            v-if="waPhone.trim()"
-            class="mt-1 font-label-sm text-label-sm"
-            :class="isWaPhoneValid ? 'text-secondary' : 'text-error'"
-          >
-            {{
-              isWaPhoneValid
-                ? `Format tujuan WA: +${normalizedWaPhone}`
-                : 'Masukkan nomor WA valid (10–15 digit, diawali 08 atau 62).'
-            }}
-          </p>
-        </div>
-
-        <!-- CallMeBot helper -->
-        <template v-if="waProvider === 'callmebot'">
-          <div class="rounded-lg bg-surface-container-low p-2.5 space-y-2 text-body-sm text-on-surface-variant">
-            <p>
-              <strong>Gratis tanpa server:</strong> Simpan nomor bot CallMeBot (<strong>{{ CALLMEBOT_BOT_PHONE }}</strong>) ke kontak, lalu kirim pesan <code>I allow callmebot to send me messages</code> untuk mendapatkan API Key di WhatsApp Anda.
-            </p>
-            <div class="flex flex-wrap items-center gap-2">
-              <a
-                :href="callMeBotUrl"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary text-on-secondary font-label-sm text-label-sm"
-              >
-                <span class="material-symbols-outlined text-[15px]">open_in_new</span>
-                <span>Buka WA Aktivasi CallMeBot</span>
-              </a>
-              <a
-                :href="CALLMEBOT_GUIDE_URL"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="inline-flex items-center gap-1 text-primary underline font-label-sm text-label-sm"
-              >
-                <span>Cek nomor bot terbaru</span>
-              </a>
-            </div>
-          </div>
-          <input
-            v-model="waApiKey"
-            type="password"
-            placeholder="API Key CallMeBot (dari balasan WA bot)"
-            class="w-full bg-surface-container-low rounded-lg px-3 py-2.5 font-body-sm text-body-sm text-on-surface placeholder:text-outline focus:outline-none focus:ring-2 focus:ring-secondary/40"
-          />
-        </template>
-
-        <!-- Fonnte helper -->
-        <template v-else-if="waProvider === 'fonnte'">
-          <input
-            v-model="waApiKey"
-            type="password"
-            placeholder="Token API Fonnte (dari dashboard fonnte.com)"
-            class="w-full bg-surface-container-low rounded-lg px-3 py-2.5 font-body-sm text-body-sm text-on-surface placeholder:text-outline focus:outline-none focus:ring-2 focus:ring-secondary/40"
-          />
-        </template>
-
-        <!-- Central Bot Relay Server -->
-        <template v-else-if="waProvider === 'relay'">
-          <div
-            v-if="hasBuiltInRelay"
-            class="rounded-lg bg-secondary-container/45 text-on-secondary-container px-3 py-2 font-body-sm text-body-sm flex items-center gap-1.5"
-          >
-            <span class="material-symbols-outlined text-[16px]">check_circle</span>
-            <span>Server Bot WA terpasang otomatis — Anda cukup mengisi Nomor WhatsApp saja.</span>
-          </div>
-          <input
-            v-model="waWebhookUrl"
-            type="url"
-            placeholder="URL Server Bot WA (mis. https://bot-wa.domain.com/api/wa/send)"
-            class="w-full bg-surface-container-low rounded-lg px-3 py-2.5 font-body-sm text-body-sm text-on-surface placeholder:text-outline focus:outline-none focus:ring-2 focus:ring-secondary/40"
-          />
-          <input
-            v-model="waApiKey"
-            type="password"
-            placeholder="Relay Secret / Bearer Token (opsional)"
-            class="w-full bg-surface-container-low rounded-lg px-3 py-2.5 font-body-sm text-body-sm text-on-surface placeholder:text-outline focus:outline-none focus:ring-2 focus:ring-secondary/40"
-          />
-        </template>
-
-        <!-- Custom Webhook -->
-        <template v-else>
-          <input
-            v-model="waWebhookUrl"
-            type="url"
-            placeholder="URL Webhook Bot WA (POST JSON { phone, message })"
-            class="w-full bg-surface-container-low rounded-lg px-3 py-2.5 font-body-sm text-body-sm text-on-surface placeholder:text-outline focus:outline-none focus:ring-2 focus:ring-secondary/40"
-          />
-          <input
-            v-model="waApiKey"
-            type="password"
-            placeholder="Bearer Token / API Key (opsional)"
-            class="w-full bg-surface-container-low rounded-lg px-3 py-2.5 font-body-sm text-body-sm text-on-surface placeholder:text-outline focus:outline-none focus:ring-2 focus:ring-secondary/40"
-          />
-        </template>
-      </div>
-
-      <div class="flex items-center justify-between gap-2 flex-wrap">
-        <span class="font-body-sm text-body-sm text-secondary">
-          {{ waSavedMsg }}
-        </span>
-        <div class="flex items-center gap-2 ml-auto">
-          <button
-            type="button"
-            class="px-3.5 py-2 rounded-xl bg-surface-container text-primary font-label-md text-label-md flex items-center gap-1"
-            @click="handleTestWhatsApp"
-          >
-            <span class="material-symbols-outlined text-[16px]">send</span>
-            <span>Uji Kirim WA</span>
-          </button>
-          <button
-            type="button"
-            class="px-4 py-2 rounded-xl bg-primary text-on-primary font-label-md text-label-md"
-            @click="saveWhatsAppConfig"
-          >
-            Simpan WA
           </button>
         </div>
       </div>

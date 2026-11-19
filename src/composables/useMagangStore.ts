@@ -25,11 +25,6 @@ import {
   type MonevStatusCheckResult
 } from '@/services/monevPortalService'
 import { sendTelegramReminder } from '@/services/telegramService'
-import {
-  sendWhatsAppReminder,
-  syncNativeWhatsAppConfig,
-  type WhatsAppSendResult
-} from '@/services/whatsappService'
 import type {
   AlarmRule,
   InternProfile,
@@ -194,13 +189,6 @@ export function useMagangStore() {
         workDays: schedule.value.workDays
       }
     )
-    await syncNativeWhatsAppConfig({
-      enabled: profile.value.whatsappEnabled,
-      provider: profile.value.whatsappProvider,
-      phone: profile.value.whatsappPhone,
-      apiKey: profile.value.whatsappApiKey,
-      webhookUrl: profile.value.whatsappWebhookUrl
-    })
   }
 
   async function toggleAlarm(alarmId: string): Promise<void> {
@@ -247,22 +235,6 @@ export function useMagangStore() {
     }
     await db.profile.put(next).catch(() => {})
     profile.value = next
-
-    if (
-      'whatsappEnabled' in patch ||
-      'whatsappProvider' in patch ||
-      'whatsappPhone' in patch ||
-      'whatsappApiKey' in patch ||
-      'whatsappWebhookUrl' in patch
-    ) {
-      await syncNativeWhatsAppConfig({
-        enabled: next.whatsappEnabled,
-        provider: next.whatsappProvider,
-        phone: next.whatsappPhone,
-        apiKey: next.whatsappApiKey,
-        webhookUrl: next.whatsappWebhookUrl
-      })
-    }
   }
 
   async function syncPortalStatus(options?: {
@@ -708,7 +680,6 @@ export function useMagangStore() {
     title: string
     body: string
     telegramResult?: { ok: boolean; error?: string }
-    whatsappResult?: WhatsAppSendResult
   }> {
     const title = `Pengingat Absen Monev (${schedule.value.monevCheckTime} ${schedule.value.timezone})`
     const body =
@@ -717,53 +688,15 @@ export function useMagangStore() {
     await triggerImmediateAlert(title, body)
     await addNotification({ title, body, type: 'alarm' })
 
-    let telegramResult: { ok: boolean; error?: string } | undefined
     if (profile.value.telegramBotToken && profile.value.telegramChatId) {
-      telegramResult = await sendTelegramReminder(
+      const telegramResult = await sendTelegramReminder(
         profile.value.telegramBotToken,
         profile.value.telegramChatId,
         `⏰ <b>${title}</b>\n${body}\nPortal: ${profile.value.portalUrl}`
       )
+      return { title, body, telegramResult }
     }
-
-    let whatsappResult: WhatsAppSendResult | undefined
-    if (profile.value.whatsappEnabled && profile.value.whatsappPhone) {
-      whatsappResult = await sendWhatsAppReminder(
-        {
-          enabled: profile.value.whatsappEnabled,
-          provider: profile.value.whatsappProvider,
-          phone: profile.value.whatsappPhone,
-          apiKey: profile.value.whatsappApiKey,
-          webhookUrl: profile.value.whatsappWebhookUrl
-        },
-        `⏰ *[MagangHub Reminder]*\n${title}\n${body}\nPortal: ${profile.value.portalUrl}`
-      )
-    }
-
-    return { title, body, telegramResult, whatsappResult }
-  }
-
-  async function testWhatsAppReminder(
-    override?: Partial<
-      Pick<
-        InternProfile,
-        | 'whatsappEnabled'
-        | 'whatsappProvider'
-        | 'whatsappPhone'
-        | 'whatsappApiKey'
-        | 'whatsappWebhookUrl'
-      >
-    >
-  ): Promise<WhatsAppSendResult> {
-    const cfg = {
-      enabled: override?.whatsappEnabled ?? true,
-      provider: override?.whatsappProvider ?? profile.value.whatsappProvider,
-      phone: override?.whatsappPhone ?? profile.value.whatsappPhone,
-      apiKey: override?.whatsappApiKey ?? profile.value.whatsappApiKey,
-      webhookUrl: override?.whatsappWebhookUrl ?? profile.value.whatsappWebhookUrl
-    }
-    const msg = `✅ *[MagangHub Reminder]*\nBot pengingat WhatsApp aktif untuk ${profile.value.name}!\nJadwal cek Monev: ${schedule.value.monevCheckTime} ${schedule.value.timezone}\nPortal: ${profile.value.portalUrl}`
-    return sendWhatsAppReminder(cfg, msg)
+    return { title, body }
   }
 
   return {
@@ -802,7 +735,6 @@ export function useMagangStore() {
     toggleHolidayToday,
     addNotification,
     markAllNotificationsRead,
-    triggerTestReminder,
-    testWhatsAppReminder
+    triggerTestReminder
   }
 }

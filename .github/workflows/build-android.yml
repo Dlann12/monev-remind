@@ -32,8 +32,6 @@ jobs:
         run: npm test
 
       - name: Build Vue + Vite production bundle
-        env:
-          VITE_WA_BOT_RELAY_URL: ${{ vars.VITE_WA_BOT_RELAY_URL || '' }}
         run: npm run build
 
       - name: Setup Java 21

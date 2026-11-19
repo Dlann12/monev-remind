@@ -187,24 +187,10 @@ interface MonevSyncPlugin {
   openDeviceAlarmSettings(options?: {
     target?: 'exact_alarm' | 'battery'
   }): Promise<void>
-  sendWhatsAppMessage(options: {
-    provider: string
-    phone: string
-    apiKey: string
-    webhookUrl: string
-    message: string
-  }): Promise<{ ok: boolean; httpStatus?: number; error?: string }>
-  saveWhatsAppConfig(options: {
-    enabled: boolean
-    provider: string
-    phone: string
-    apiKey: string
-    webhookUrl: string
-  }): Promise<void>
   clearPortalSession(): Promise<void>
 }
 
-export const MonevSync = registerPlugin<MonevSyncPlugin>('MonevSync')
+const MonevSync = registerPlugin<MonevSyncPlugin>('MonevSync')
 
 export interface MonevStatusCheckResult {
   outcome:

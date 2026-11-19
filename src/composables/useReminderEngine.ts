@@ -5,7 +5,6 @@ import {
   triggerImmediateAlert
 } from '@/services/capacitorBridge'
 import { sendTelegramReminder } from '@/services/telegramService'
-import { sendWhatsAppReminder } from '@/services/whatsappService'
 import {
   formatCountdown,
   formatTimeHHMM,
@@ -121,24 +120,6 @@ export function useReminderEngine() {
     activeAlert.value = alert
   }
 
-  async function notifyWhatsAppIfEnabled(
-    title: string,
-    body: string
-  ): Promise<void> {
-    const p = store.profile.value
-    if (!p.whatsappEnabled || !p.whatsappPhone) return
-    await sendWhatsAppReminder(
-      {
-        enabled: p.whatsappEnabled,
-        provider: p.whatsappProvider,
-        phone: p.whatsappPhone,
-        apiKey: p.whatsappApiKey,
-        webhookUrl: p.whatsappWebhookUrl
-      },
-      `⏰ *[MagangHub Reminder]*\n${title}\n${body}\nPortal: ${p.portalUrl}`
-    ).catch(() => {})
-  }
-
   async function maybeAutoFillAt2300(): Promise<void> {
     if (!store.isAuthenticated.value) return
     const currentNow = now.value
@@ -161,21 +142,17 @@ export function useReminderEngine() {
     }
     const autoTime = store.schedule.value.autoFillTime || '23:00'
     if (res.outcome === 'submitted') {
-      const title = `Auto-Isi Monev ${autoTime} Berhasil`
       showAlertBanner({
-        title,
+        title: `Auto-Isi Monev ${autoTime} Berhasil`,
         body: res.message,
         isSessionWarning: false
       })
-      await notifyWhatsAppIfEnabled(title, res.message)
     } else if (res.outcome === 'session_expired') {
-      const title = `Auto-Isi Monev ${autoTime} Gagal (Sesi Habis)`
       showAlertBanner({
-        title,
+        title: `Auto-Isi Monev ${autoTime} Gagal (Sesi Habis)`,
         body: res.message,
         isSessionWarning: true
       })
-      await notifyWhatsAppIfEnabled(title, res.message)
     }
   }
 
@@ -240,8 +217,6 @@ export function useReminderEngine() {
           `⏰ <b>${title}</b>\n${body}\nPortal: ${store.profile.value.portalUrl}`
         )
       }
-
-      await notifyWhatsAppIfEnabled(title, body)
     }
 
     await maybeAutoFillAt2300()
@@ -288,7 +263,6 @@ export function useReminderEngine() {
     })
     await triggerImmediateAlert(title, body)
     await store.addNotification({ title, body, type: 'catch_up' })
-    await notifyWhatsAppIfEnabled(title, body)
   }
 
   onMounted(async () => {

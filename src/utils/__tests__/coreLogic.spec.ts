@@ -26,11 +26,6 @@ import {
   parseMonevUserPayload
 } from '@/services/monevPortalService'
 import {
-  isValidWhatsAppPhone,
-  normalizeIndonesianPhone,
-  sendWhatsAppReminder
-} from '@/services/whatsappService'
-import {
   detectMonevCategory,
   generateMonevFromShortActivity
 } from '@/utils/monevGenerator'
@@ -543,70 +538,5 @@ describe('Offline Monev Auto-Generator', () => {
     expect(v0.activity_log).toContain('bikin halaman login dan fix bug api')
     expect(v0.obstacles).toContain('sempat terkendala error CORS')
     expect(v0.activity_log).not.toBe(v1.activity_log)
-  })
-})
-
-describe('WhatsApp Bot Reminder service', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('normalizes Indonesian phone numbers accurately', () => {
-    expect(normalizeIndonesianPhone('0812-3456-7890')).toBe('6281234567890')
-    expect(normalizeIndonesianPhone('+62 812 3456 7890')).toBe('6281234567890')
-    expect(normalizeIndonesianPhone('81234567890')).toBe('6281234567890')
-    expect(isValidWhatsAppPhone('081234567890')).toBe(true)
-    expect(isValidWhatsAppPhone('12345')).toBe(false)
-  })
-
-  it('dispatches CallMeBot, Fonnte, and Relay requests correctly', async () => {
-    let lastUrl = ''
-    let lastInit: RequestInit | undefined
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        lastUrl = String(input)
-        lastInit = init
-        if (lastUrl.includes('fonnte.com')) {
-          return new Response(JSON.stringify({ status: false, reason: 'invalid token' }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' }
-          })
-        }
-        return new Response(JSON.stringify({ ok: true }), { status: 200 })
-      })
-    )
-
-    const cmb = await sendWhatsAppReminder(
-      { enabled: true, provider: 'callmebot', phone: '081234567890', apiKey: '998877' },
-      'Jangan lupa isi monev!'
-    )
-    expect(cmb.ok).toBe(true)
-    expect(lastUrl).toContain('api.callmebot.com/whatsapp.php?phone=+6281234567890')
-
-    const fonnte = await sendWhatsAppReminder(
-      { enabled: true, provider: 'fonnte', phone: '081234567890', apiKey: 'bad-token' },
-      'Jangan lupa isi monev!'
-    )
-    expect(fonnte.ok).toBe(false)
-    expect(fonnte.error).toContain('invalid token')
-
-    const relay = await sendWhatsAppReminder(
-      {
-        enabled: true,
-        provider: 'relay',
-        phone: '081234567890',
-        apiKey: 'secret123',
-        webhookUrl: 'https://bot.example.com/api/wa/send'
-      },
-      'Pengingat Monev 17:00'
-    )
-    expect(relay.ok).toBe(true)
-    expect(lastUrl).toBe('https://bot.example.com/api/wa/send')
-    expect(JSON.parse(String(lastInit?.body))).toEqual({
-      phone: '6281234567890',
-      message: 'Pengingat Monev 17:00',
-      source: 'maganghub-reminder'
-    })
   })
 })

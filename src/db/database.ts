@@ -28,11 +28,6 @@ export class MagangHubDB extends Dexie {
 
 export const db = new MagangHubDB()
 
-const DEFAULT_WA_RELAY_URL =
-  typeof import.meta !== 'undefined' && import.meta.env?.VITE_WA_BOT_RELAY_URL
-    ? String(import.meta.env.VITE_WA_BOT_RELAY_URL).trim()
-    : ''
-
 export const DEFAULT_PROFILE: InternProfile = {
   id: 'default',
   portalUserId: '',
@@ -45,11 +40,6 @@ export const DEFAULT_PROFILE: InternProfile = {
   portalUrl: 'https://monev.maganghub.kemnaker.go.id/dashboard',
   telegramBotToken: '',
   telegramChatId: '',
-  whatsappEnabled: false,
-  whatsappProvider: DEFAULT_WA_RELAY_URL ? 'relay' : 'callmebot',
-  whatsappPhone: '',
-  whatsappApiKey: '',
-  whatsappWebhookUrl: DEFAULT_WA_RELAY_URL,
   sessionLastVerifiedAt: null,
   sessionTimeoutHours: 12,
   portalSyncState: 'disconnected',
