@@ -15,8 +15,10 @@ export interface WhatsAppSendResult {
   error?: string
 }
 
-export const CALLMEBOT_BOT_PHONE = '+34 623 78 64 49'
+export const CALLMEBOT_BOT_PHONE = '+34 644 51 95 23'
 export const CALLMEBOT_ACTIVATION_TEXT = 'I allow callmebot to send me messages'
+export const CALLMEBOT_GUIDE_URL =
+  'https://www.callmebot.com/blog/free-api-whatsapp-messages/'
 
 export const DEFAULT_WA_RELAY_URL =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_WA_BOT_RELAY_URL
@@ -24,7 +26,7 @@ export const DEFAULT_WA_RELAY_URL =
     : ''
 
 export function getCallMeBotActivationUrl(): string {
-  return `https://wa.me/34623786449?text=${encodeURIComponent(CALLMEBOT_ACTIVATION_TEXT)}`
+  return `https://wa.me/34644519523?text=${encodeURIComponent(CALLMEBOT_ACTIVATION_TEXT)}`
 }
 
 /**

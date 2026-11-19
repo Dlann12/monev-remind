@@ -11,6 +11,7 @@ import {
 } from '@/services/monevPortalService'
 import {
   CALLMEBOT_BOT_PHONE,
+  CALLMEBOT_GUIDE_URL,
   DEFAULT_WA_RELAY_URL,
   getCallMeBotActivationUrl,
   isValidWhatsAppPhone,
@@ -597,17 +598,27 @@ function saveTelegramConfig() {
         <template v-if="waProvider === 'callmebot'">
           <div class="rounded-lg bg-surface-container-low p-2.5 space-y-2 text-body-sm text-on-surface-variant">
             <p>
-              <strong>Gratis tanpa server:</strong> Kirim 1x pesan aktivasi ke bot CallMeBot ({{ CALLMEBOT_BOT_PHONE }}) untuk mendapatkan API Key di WhatsApp Anda.
+              <strong>Gratis tanpa server:</strong> Simpan nomor bot CallMeBot (<strong>{{ CALLMEBOT_BOT_PHONE }}</strong>) ke kontak, lalu kirim pesan <code>I allow callmebot to send me messages</code> untuk mendapatkan API Key di WhatsApp Anda.
             </p>
-            <a
-              :href="callMeBotUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary text-on-secondary font-label-sm text-label-sm"
-            >
-              <span class="material-symbols-outlined text-[15px]">open_in_new</span>
-              <span>Buka WA Aktivasi CallMeBot</span>
-            </a>
+            <div class="flex flex-wrap items-center gap-2">
+              <a
+                :href="callMeBotUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary text-on-secondary font-label-sm text-label-sm"
+              >
+                <span class="material-symbols-outlined text-[15px]">open_in_new</span>
+                <span>Buka WA Aktivasi CallMeBot</span>
+              </a>
+              <a
+                :href="CALLMEBOT_GUIDE_URL"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-1 text-primary underline font-label-sm text-label-sm"
+              >
+                <span>Cek nomor bot terbaru</span>
+              </a>
+            </div>
           </div>
           <input
             v-model="waApiKey"
