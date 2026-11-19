@@ -1309,6 +1309,22 @@ if (existsSync(variablesGradlePath)) {
   console.log('Updated minSdkVersion = 26 in android/variables.gradle')
 }
 
+// 5b. Sync Android versionName & versionCode from APP_VERSION env or package.json
+const appGradlePath = resolve(root, 'android/app/build.gradle')
+if (existsSync(appGradlePath)) {
+  const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf-8'))
+  const rawVer = (process.env.APP_VERSION || pkg.version || '1.0.0').replace(/^v/, '')
+  const [maj = 1, min = 0, pat = 0] = rawVer
+    .split('.')
+    .map((n) => Number.parseInt(n, 10) || 0)
+  const versionCode = maj * 10000 + min * 100 + pat
+  let appGradle = readFileSync(appGradlePath, 'utf-8')
+  appGradle = appGradle.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`)
+  appGradle = appGradle.replace(/versionName\s+"[^"]*"/, `versionName "${rawVer}"`)
+  writeFileSync(appGradlePath, appGradle, 'utf-8')
+  console.log(`Updated Android versionName="${rawVer}" (versionCode=${versionCode})`)
+}
+
 // 6. Replace default Capacitor launcher icons & splash with custom MagangHub Reminder branding
 const customAssetsDir = resolve(root, 'resources/android')
 const densities = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']

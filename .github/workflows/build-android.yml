@@ -40,7 +40,41 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - name: Determine release version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PKG_VER=$(node -p "require('./package.json').version")
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+            VER="${TAG#v}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            VER="${PKG_VER}"
+            TAG="v${PKG_VER}"
+          else
+            TAG="v${PKG_VER}"
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              LATEST_TAG=$(gh release list --limit 100 --json tagName --jq '[.[].tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort_by(ltrimstr("v") | split(".") | map(tonumber)) | last // ""')
+              if [ -n "$LATEST_TAG" ]; then
+                BASE="${LATEST_TAG#v}"
+                IFS='.' read -r MAJ MIN PAT <<< "$BASE"
+                VER="${MAJ}.${MIN}.$((PAT + 1))"
+                TAG="v${VER}"
+              else
+                VER="${PKG_VER}"
+              fi
+            else
+              VER="${PKG_VER}"
+            fi
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release version: ${TAG} (versionName=${VER})"
+
       - name: Add Android platform if missing
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
         run: |
           if [ ! -d "android" ]; then
             npx cap add android
@@ -69,19 +103,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v1.0.0"
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            TAG="${{ github.ref_name }}"
-          fi
+          TAG="${{ steps.version.outputs.tag }}"
+          VER="${{ steps.version.outputs.version }}"
           SHORT_SHA="${GITHUB_SHA::7}"
-          NOTES="Build Android APK otomatis (commit \`${SHORT_SHA}\`). Langsung unduh **MagangHub-Reminder.apk** di bawah ini untuk dipasang pada perangkat Android 8.0+."
+          COMMIT_SUBJECT=$(git log -1 --pretty=%s)
+          NOTES="Rilis **MagangHub Reminder ${TAG}** (versi APK \`${VER}\`, commit \`${SHORT_SHA}\`).\n\nPerubahan utama: ${COMMIT_SUBJECT}\n\nLangsung unduh **MagangHub-Reminder.apk** di bawah ini untuk dipasang pada perangkat Android 8.0+."
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" MagangHub-Reminder.apk --clobber
-            gh release edit "$TAG" --target "${GITHUB_SHA}" --title "MagangHub Reminder ${TAG}" --notes "$NOTES" --latest
+            gh release edit "$TAG" --target "${GITHUB_SHA}" --title "MagangHub Reminder ${TAG}" --notes "$(printf '%b' "$NOTES")" --latest
           else
             gh release create "$TAG" MagangHub-Reminder.apk \
               --target "${GITHUB_SHA}" \
               --title "MagangHub Reminder ${TAG}" \
-              --notes "$NOTES" \
+              --notes "$(printf '%b' "$NOTES")" \
               --latest
           fi
