@@ -47,6 +47,7 @@ interface Emits {
   openPortal: []
   syncNow: []
   openConnectModal: []
+  openQuickFill: []
   navigateTab: [tab: AppTab]
 }
 
@@ -99,6 +100,7 @@ const targetTimeLabel = computed(() => {
       @open-portal="emit('openPortal')"
       @sync-now="emit('syncNow')"
       @open-connect-modal="emit('openConnectModal')"
+      @open-quick-fill="emit('openQuickFill')"
     />
 
     <SmartAlarmsCard

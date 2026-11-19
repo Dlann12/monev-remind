@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_ALARMS, DEFAULT_SCHEDULE } from '@/db/database'
 import type { MonevRecord } from '@/types/app'
 import {
+  convertTimeFromTzToDeviceLocal,
   formatCountdown,
   getCountdownSeconds,
+  getShiftedDate,
   isSessionLikelyExpired,
   isWorkdayActive,
   shouldTriggerAutoFill2300,
@@ -11,9 +13,13 @@ import {
   syncAlarmRuleDisplay
 } from '@/utils/dateTime'
 import {
+  MONEV_MIN_CHARS,
+  autoSubmitMonevFromYesterday,
   buildCompleteMonevHistory,
+  ensureMinMonevLength,
   findLatestDailyLogPayload,
   mapOffDaysToWorkDays,
+  normalizeDailyLogDraftForSubmit,
   parseMonevAttendancesPayload,
   parseMonevHomePayload,
   parseMonevUserPayload
@@ -21,19 +27,19 @@ import {
 
 describe('Workday, holiday, 17:00 catch-up, and 23:00 auto-fill logic', () => {
   it('marks Monday-Friday as active workdays when not a holiday', () => {
-    const monday = new Date('2026-11-16T10:00:00')
-    const sunday = new Date('2026-11-15T10:00:00')
+    const monday = new Date('2026-11-16T10:00:00+07:00')
+    const sunday = new Date('2026-11-15T10:00:00+07:00')
     expect(isWorkdayActive(monday, DEFAULT_SCHEDULE, null)).toBe(true)
     expect(isWorkdayActive(sunday, DEFAULT_SCHEDULE, null)).toBe(false)
   })
 
   it('pauses workday on Indonesian national holidays when sync is enabled', () => {
-    const independenceDay = new Date('2026-08-17T10:00:00')
+    const independenceDay = new Date('2026-08-17T10:00:00+07:00')
     expect(isWorkdayActive(independenceDay, DEFAULT_SCHEDULE, null)).toBe(false)
   })
 
   it('pauses workday when Libur Hari Ini override is active', () => {
-    const monday = new Date('2026-11-16T10:00:00')
+    const monday = new Date('2026-11-16T10:00:00+07:00')
     const holidayRecord: MonevRecord = {
       date: '2026-11-16',
       status: 'libur',
@@ -44,8 +50,8 @@ describe('Workday, holiday, 17:00 catch-up, and 23:00 auto-fill logic', () => {
   })
 
   it('triggers catch-up alarm after 17:00 only when Monev is not filled', () => {
-    const beforeFive = new Date('2026-11-16T16:45:00')
-    const afterFive = new Date('2026-11-16T17:15:00')
+    const beforeFive = new Date('2026-11-16T16:45:00+07:00')
+    const afterFive = new Date('2026-11-16T17:15:00+07:00')
 
     const unfilled: MonevRecord = {
       date: '2026-11-16',
@@ -67,9 +73,9 @@ describe('Workday, holiday, 17:00 catch-up, and 23:00 auto-fill logic', () => {
   })
 
   it('triggers 23:00 auto-fill on unfilled active workdays at/after 23:00 only once', () => {
-    const at2259 = new Date('2026-11-16T22:59:00')
-    const at2300 = new Date('2026-11-16T23:00:00')
-    const sundayAt2300 = new Date('2026-11-15T23:00:00')
+    const at2259 = new Date('2026-11-16T22:59:00+07:00')
+    const at2300 = new Date('2026-11-16T23:00:00+07:00')
+    const sundayAt2300 = new Date('2026-11-15T23:00:00+07:00')
 
     const unfilled: MonevRecord = {
       date: '2026-11-16',
@@ -306,5 +312,180 @@ describe('Monev API parsers, complete history, and daily-log copy helpers', () =
       lesson_learned: 'Memahami validasi form Monev',
       obstacles: 'Tidak ada kendala'
     })
+  })
+})
+
+describe('Kemnaker 100-character minimum enforcement', () => {
+  it('pads empty and short inputs to at least 100 characters while preserving long text', () => {
+    const emptyAct = ensureMinMonevLength('', 'activity')
+    const shortLesson = ensureMinMonevLength('Belajar Vue 3', 'lesson')
+    const shortObs = ensureMinMonevLength('Tidak ada kendala.', 'obstacles')
+    const longText = 'A'.repeat(120)
+
+    expect(emptyAct.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+    expect(shortLesson.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+    expect(shortLesson.startsWith('Belajar Vue 3. ')).toBe(true)
+    expect(shortObs.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+    expect(shortObs.startsWith('Tidak ada kendala. ')).toBe(true)
+    expect(ensureMinMonevLength(longText, 'activity')).toBe(longText)
+  })
+
+  it('normalizes all three daily-log fields before submit', () => {
+    const normalized = normalizeDailyLogDraftForSubmit({
+      sourceDate: '2026-11-16',
+      activity_log: 'Fixing bug dashboard',
+      lesson_learned: '',
+      obstacles: 'Tidak ada'
+    })
+    expect(normalized.activity_log.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+    expect(normalized.lesson_learned.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+    expect(normalized.obstacles.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+  })
+})
+
+describe('Indonesian timezone conversion (WIB / WITA / WIT)', () => {
+  it('shifts wall-clock date/hours accurately across WIB, WITA, and WIT', () => {
+    const instant = new Date('2026-11-16T16:30:00.000Z') // 23:30 WIB, 00:30+1 WITA, 01:30+1 WIT
+    const wib = getShiftedDate(instant, 'WIB')
+    const wita = getShiftedDate(instant, 'WITA')
+    const wit = getShiftedDate(instant, 'WIT')
+
+    expect(wib.getDate()).toBe(16)
+    expect(wib.getHours()).toBe(23)
+    expect(wib.getMinutes()).toBe(30)
+
+    expect(wita.getDate()).toBe(17)
+    expect(wita.getHours()).toBe(0)
+    expect(wita.getMinutes()).toBe(30)
+
+    expect(wit.getDate()).toBe(17)
+    expect(wit.getHours()).toBe(1)
+    expect(wit.getMinutes()).toBe(30)
+  })
+
+  it('computes countdown seconds accurately for WIB, WITA, and WIT', () => {
+    const instant = new Date('2026-11-16T15:30:00+07:00') // 15:30 WIB, 16:30 WITA, 17:30 WIT
+    expect(getCountdownSeconds(instant, '17:00', 'WIB')).toBe(90 * 60)
+    expect(getCountdownSeconds(instant, '17:00', 'WITA')).toBe(30 * 60)
+    expect(getCountdownSeconds(instant, '17:00', 'WIT')).toBe(0)
+  })
+
+  it('converts source timezone alarm times to device local time with consistent offsets', () => {
+    const ref = new Date('2026-11-16T05:00:00.000Z')
+    const fromWib = convertTimeFromTzToDeviceLocal('17:00', 'WIB', ref)
+    const fromWita = convertTimeFromTzToDeviceLocal('17:00', 'WITA', ref)
+    const fromWit = convertTimeFromTzToDeviceLocal('17:00', 'WIT', ref)
+
+    const wibTotal = fromWib.dayDelta * 1440 + fromWib.hour * 60 + fromWib.minute
+    const witaTotal = fromWita.dayDelta * 1440 + fromWita.hour * 60 + fromWita.minute
+    const witTotal = fromWit.dayDelta * 1440 + fromWit.hour * 60 + fromWit.minute
+
+    expect(wibTotal - witaTotal).toBe(60)
+    expect(wibTotal - witTotal).toBe(120)
+  })
+})
+
+describe('autoSubmitMonevFromYesterday fetch flow', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('returns already_filled when portal reports attendance already exists', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: { has_attendance: true, is_scheduled_off_day: false, is_holiday: false }
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    )
+
+    const res = await autoSubmitMonevFromYesterday({
+      accessToken: 'test-token',
+      targetDate: '2026-11-16'
+    })
+    expect(res.outcome).toBe('already_filled')
+  })
+
+  it('returns off_day when portal reports holiday or scheduled off day', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: { has_attendance: false, is_scheduled_off_day: false, is_holiday: true }
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    )
+
+    const res = await autoSubmitMonevFromYesterday({
+      accessToken: 'test-token',
+      targetDate: '2026-11-16'
+    })
+    expect(res.outcome).toBe('off_day')
+  })
+
+  it('returns session_expired when portal responds with HTTP 401', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('{}', { status: 401 }))
+    )
+
+    const res = await autoSubmitMonevFromYesterday({
+      accessToken: 'expired-token',
+      targetDate: '2026-11-16'
+    })
+    expect(res.outcome).toBe('session_expired')
+  })
+
+  it('normalizes short fields to >= 100 chars and submits POST payload on unfilled workday', async () => {
+    let postedBody: Record<string, string> | null = null
+    const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/users/me/home')) {
+        return new Response(
+          JSON.stringify({
+            data: { has_attendance: false, is_scheduled_off_day: false, is_holiday: false }
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+      if (url.includes('/attendances/with-daily-log')) {
+        postedBody = JSON.parse(String(init?.body || '{}')) as Record<string, string>
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const res = await autoSubmitMonevFromYesterday({
+      accessToken: 'valid-token',
+      targetDate: '2026-11-16',
+      customDraft: {
+        sourceDate: '2026-11-13',
+        activity_log: 'Mengerjakan integrasi API',
+        lesson_learned: 'Belajar TypeScript',
+        obstacles: 'Tidak ada'
+      }
+    })
+
+    expect(res.outcome).toBe('submitted')
+    expect(postedBody).not.toBeNull()
+    expect(postedBody!.date).toBe('2026-11-16')
+    expect(postedBody!.status).toBe('PRESENT')
+    expect(postedBody!.activity_log!.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+    expect(postedBody!.lesson_learned!.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
+    expect(postedBody!.obstacles!.length).toBeGreaterThanOrEqual(MONEV_MIN_CHARS)
   })
 })

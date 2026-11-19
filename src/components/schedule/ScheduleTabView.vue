@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { shallowRef, watch } from 'vue'
+import { onMounted, onUnmounted, shallowRef, watch } from 'vue'
+import {
+  isNativePlatform,
+  registerAppResumeListener
+} from '@/services/capacitorBridge'
+import {
+  checkDeviceAlarmPermissions,
+  openDeviceAlarmPermissionSettings,
+  type DeviceAlarmPermissions
+} from '@/services/monevPortalService'
 import type {
   AlarmRule,
   InternProfile,
@@ -44,6 +53,29 @@ const autoFillTime = shallowRef(props.schedule.autoFillTime || '23:00')
 const botToken = shallowRef(props.profile.telegramBotToken)
 const chatId = shallowRef(props.profile.telegramChatId)
 const telegramSavedMsg = shallowRef('')
+const isNative = isNativePlatform()
+const devicePerms = shallowRef<DeviceAlarmPermissions>({
+  canScheduleExactAlarms: true,
+  ignoringBatteryOptimizations: true
+})
+
+let cleanupResume: (() => void) | null = null
+
+async function refreshDevicePerms() {
+  if (!isNative) return
+  devicePerms.value = await checkDeviceAlarmPermissions()
+}
+
+onMounted(() => {
+  refreshDevicePerms().catch(() => {})
+  cleanupResume = registerAppResumeListener(() => {
+    refreshDevicePerms().catch(() => {})
+  })
+})
+
+onUnmounted(() => {
+  if (cleanupResume) cleanupResume()
+})
 
 watch(
   () => props.schedule.monevCheckTime,
@@ -237,6 +269,49 @@ function saveTelegramConfig() {
             Sumber Kegiatan
           </span>
           Menyalin log aktivitas hari kerja terakhir yang terisi.
+        </div>
+      </div>
+
+      <div
+        v-if="
+          isNative &&
+          (!devicePerms.canScheduleExactAlarms ||
+            !devicePerms.ignoringBatteryOptimizations)
+        "
+        class="rounded-xl bg-error-container/75 text-on-error-container p-3 space-y-2.5"
+      >
+        <div class="flex items-start gap-2">
+          <span class="material-symbols-outlined text-[18px] mt-0.5 flex-shrink-0">
+            warning
+          </span>
+          <div class="font-body-sm text-body-sm">
+            <p class="font-semibold">
+              Izin Background Android Perlu Diaktifkan
+            </p>
+            <p class="mt-0.5 opacity-90">
+              Agar alarm &amp; Auto-Isi {{ schedule.autoFillTime || '23:00' }} tetap berjalan tepat waktu saat layar terkunci, izinkan akses berikut:
+            </p>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-if="!devicePerms.canScheduleExactAlarms"
+            type="button"
+            class="px-3 py-1.5 rounded-lg bg-error text-on-error font-label-sm text-label-sm flex items-center gap-1 active:scale-[0.98] transition-transform"
+            @click="openDeviceAlarmPermissionSettings('exact_alarm')"
+          >
+            <span class="material-symbols-outlined text-[15px]">alarm</span>
+            <span>Izinkan Alarm Tepat Waktu</span>
+          </button>
+          <button
+            v-if="!devicePerms.ignoringBatteryOptimizations"
+            type="button"
+            class="px-3 py-1.5 rounded-lg bg-on-error-container text-error-container font-label-sm text-label-sm flex items-center gap-1 active:scale-[0.98] transition-transform"
+            @click="openDeviceAlarmPermissionSettings('battery')"
+          >
+            <span class="material-symbols-outlined text-[15px]">battery_charging_full</span>
+            <span>Matikan Pembatasan Baterai</span>
+          </button>
         </div>
       </div>
     </div>

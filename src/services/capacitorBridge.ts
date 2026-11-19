@@ -1,8 +1,9 @@
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
 import { App } from '@capacitor/app'
-import type { AlarmRule, ScheduleConfig } from '@/types/app'
+import type { AlarmRule, MonevRecord, ScheduleConfig } from '@/types/app'
 import { playReminderChime } from '@/utils/audio'
+import { getZonedTargetInstant, isWorkdayActive } from '@/utils/dateTime'
 
 export const MONEV_NOTIFICATION_CHANNEL_ID = 'monev_voice_alarm_v1'
 export const MONEV_CUSTOM_SOUND_FILE = 'reminder_sound.mp3'
@@ -103,7 +104,8 @@ export async function triggerImmediateAlert(
 export async function syncNativeAlarms(
   alarms: ReadonlyArray<AlarmRule>,
   schedule: ScheduleConfig,
-  todayFilled: boolean
+  todayFilled: boolean,
+  todayRecord?: MonevRecord | null
 ): Promise<void> {
   if (!isNativePlatform()) return
 
@@ -120,28 +122,54 @@ export async function syncNativeAlarms(
 
     await ensureNotificationChannel()
 
-    const notifications = alarms
-      .filter((a) => a.enabled)
-      .filter((a) => !(a.kind === 'snooze' && (todayFilled || !schedule.snoozeEnabled)))
-      .map((alarm, index) => {
-        const [hourStr, minuteStr] = alarm.time.split(':')
-        const hour = Number(hourStr) || 17
-        const minute = Number(minuteStr) || 0
+    const now = new Date()
+    const enabledAlarms = alarms.filter((a) => a.enabled)
+    const notifications: Array<{
+      id: number
+      title: string
+      body: string
+      channelId: string
+      sound: string
+      smallIcon: string
+      schedule: {
+        at: Date
+        allowWhileIdle: boolean
+      }
+    }> = []
 
-        return {
-          id: 100 + index,
+    for (let dayOffset = 0; dayOffset < 7; dayOffset += 1) {
+      for (let index = 0; index < enabledAlarms.length; index += 1) {
+        const alarm = enabledAlarms[index]
+        if (!alarm) continue
+        if (alarm.kind === 'snooze' && !schedule.snoozeEnabled) continue
+        if (dayOffset === 0 && todayFilled) continue
+
+        const { fireAt, dateKey } = getZonedTargetInstant(
+          now,
+          dayOffset,
+          alarm.time,
+          schedule.timezone
+        )
+        if (fireAt.getTime() <= now.getTime()) continue
+
+        const recordForDay =
+          todayRecord && todayRecord.date === dateKey ? todayRecord : null
+        if (!isWorkdayActive(fireAt, schedule, recordForDay)) continue
+
+        notifications.push({
+          id: 1000 + index * 10 + dayOffset,
           title: alarm.title,
           body: 'Monev MagangHub hari ini belum diisi. Jangan lupa isi monev sekarang!',
           channelId: MONEV_NOTIFICATION_CHANNEL_ID,
           sound: MONEV_CUSTOM_SOUND_FILE,
           smallIcon: 'ic_stat_alarm',
           schedule: {
-            on: { hour, minute },
-            repeats: true,
+            at: fireAt,
             allowWhileIdle: true
           }
-        }
-      })
+        })
+      }
+    }
 
     if (notifications.length > 0) {
       await LocalNotifications.schedule({ notifications })

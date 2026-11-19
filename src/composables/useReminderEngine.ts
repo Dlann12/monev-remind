@@ -9,9 +9,10 @@ import {
   formatCountdown,
   formatTimeHHMM,
   getCountdownSeconds,
+  getShiftedDate,
   parseTimeToMinutes,
   shouldTriggerAutoFill2300,
-  toLocalDateKey
+  toZonedDateKey
 } from '@/utils/dateTime'
 import { useMagangStore } from './useMagangStore'
 
@@ -35,11 +36,13 @@ export function useReminderEngine() {
 
   let tickTimer: ReturnType<typeof setInterval> | null = null
   let cleanupResume: (() => void) | null = null
+  let lastEvaluatedMinuteKey = ''
 
   const statusMeta = computed(() => {
     const rec = store.todayRecord.value
     const sched = store.schedule.value
-    const nowMinutes = now.value.getHours() * 60 + now.value.getMinutes()
+    const tzNow = getShiftedDate(now.value, sched.timezone)
+    const nowMinutes = tzNow.getHours() * 60 + tzNow.getMinutes()
     const checkMinutes = parseTimeToMinutes(sched.monevCheckTime)
 
     if (rec.status === 'izin') {
@@ -100,7 +103,11 @@ export function useReminderEngine() {
   })
 
   const countdownSeconds = computed(() =>
-    getCountdownSeconds(now.value, store.schedule.value.monevCheckTime)
+    getCountdownSeconds(
+      now.value,
+      store.schedule.value.monevCheckTime,
+      store.schedule.value.timezone
+    )
   )
 
   const countdownText = computed(() => formatCountdown(countdownSeconds.value))
@@ -116,7 +123,7 @@ export function useReminderEngine() {
   async function maybeAutoFillAt2300(): Promise<void> {
     if (!store.isAuthenticated.value) return
     const currentNow = now.value
-    const todayKey = toLocalDateKey(currentNow)
+    const todayKey = toZonedDateKey(currentNow, store.schedule.value.timezone)
     if (lastAutoFillHandledDate.value === todayKey) return
 
     if (
@@ -154,8 +161,9 @@ export function useReminderEngine() {
     if (!store.isTodayWorkday.value) return
     if (store.todayRecord.value.status === 'terisi') return
 
-    const currentHHMM = formatTimeHHMM(now.value)
-    const todayKey = toLocalDateKey(now.value)
+    const tzNow = getShiftedDate(now.value, store.schedule.value.timezone)
+    const currentHHMM = formatTimeHHMM(tzNow)
+    const todayKey = toZonedDateKey(now.value, store.schedule.value.timezone)
 
     for (const alarm of store.alarms.value) {
       if (!alarm.enabled) continue
@@ -165,12 +173,12 @@ export function useReminderEngine() {
 
       await store.markAlarmTriggeredToday(alarm.id)
 
-      // PRD Flow step 2-3: query real Monev portal status first if connected
+      // PRD Flow step 2-3: query real Monev portal status first if connected (fast check without history)
       if (
         store.profile.value.portalSyncState !== 'disconnected' ||
         store.profile.value.portalAccessToken
       ) {
-        const syncRes = await store.syncPortalStatus()
+        const syncRes = await store.syncPortalStatus({ includeHistory: false })
         if (syncRes.outcome === 'filled' || syncRes.outcome === 'off_day') {
           return
         }
@@ -221,7 +229,8 @@ export function useReminderEngine() {
       store.profile.value.portalSyncState !== 'disconnected' ||
       store.profile.value.portalAccessToken
     ) {
-      const syncRes = await store.syncPortalStatus()
+      const needsHistory = store.records.value.length === 0
+      const syncRes = await store.syncPortalStatus({ includeHistory: needsHistory })
       if (syncRes.outcome === 'filled' || syncRes.outcome === 'off_day') {
         return
       }
@@ -238,7 +247,7 @@ export function useReminderEngine() {
     await maybeAutoFillAt2300()
     if (store.todayRecord.value.status === 'terisi') return
 
-    const todayKey = toLocalDateKey(new Date())
+    const todayKey = toZonedDateKey(new Date(), store.schedule.value.timezone)
     if (lastCatchUpDate.value === todayKey) return
     if (!store.isCatchUpNeeded.value) return
 
@@ -262,8 +271,12 @@ export function useReminderEngine() {
     await runCatchUpCheck()
 
     tickTimer = setInterval(() => {
-      now.value = new Date()
-      if (now.value.getSeconds() === 0) {
+      const current = new Date()
+      now.value = current
+      const tzNow = getShiftedDate(current, store.schedule.value.timezone)
+      const minuteKey = `${toZonedDateKey(current, store.schedule.value.timezone)}_${formatTimeHHMM(tzNow)}`
+      if (minuteKey !== lastEvaluatedMinuteKey) {
+        lastEvaluatedMinuteKey = minuteKey
         evaluateAlarms().catch(() => {})
       }
     }, 1000)

@@ -103,11 +103,99 @@ export function parseTimeToMinutes(hhmm: string): number {
   return h * 60 + m
 }
 
-export function getCountdownSeconds(now: Date, targetHHMM: string): number {
+export const TIMEZONE_UTC_OFFSETS: Record<TimezoneLabel, number> = {
+  WIB: 420,
+  WITA: 480,
+  WIT: 540
+}
+
+/**
+ * Shifts a Date instant so its local getters (.getHours(), .getDate(), etc.)
+ * match the wall-clock time in the target Indonesian timezone (WIB/WITA/WIT).
+ */
+export function getShiftedDate(
+  date: Date = new Date(),
+  timezone: TimezoneLabel = 'WIB'
+): Date {
+  const targetOffsetMinutes = TIMEZONE_UTC_OFFSETS[timezone] ?? 420
+  const deltaMinutes = targetOffsetMinutes + date.getTimezoneOffset()
+  return new Date(date.getTime() + deltaMinutes * 60_000)
+}
+
+export function toZonedDateKey(
+  date: Date = new Date(),
+  timezone: TimezoneLabel = 'WIB'
+): string {
+  return toLocalDateKey(getShiftedDate(date, timezone))
+}
+
+/**
+ * Converts a wall-clock HH:mm in sourceTimezone (WIB/WITA/WIT) to the
+ * device's local wall-clock hour/minute for native OS alarm scheduling.
+ */
+export function convertTimeFromTzToDeviceLocal(
+  timeHHMM: string,
+  sourceTimezone: TimezoneLabel = 'WIB',
+  referenceDate: Date = new Date()
+): { hour: number; minute: number; dayDelta: number } {
+  const [hStr, mStr] = timeHHMM.split(':')
+  const srcHour = Number(hStr) || 0
+  const srcMinute = Number(mStr) || 0
+  const sourceOffsetMinutes = TIMEZONE_UTC_OFFSETS[sourceTimezone] ?? 420
+  const deviceOffsetMinutes = -referenceDate.getTimezoneOffset()
+  const totalMinutes =
+    srcHour * 60 + srcMinute + (deviceOffsetMinutes - sourceOffsetMinutes)
+  const dayDelta = Math.floor(totalMinutes / 1440)
+  const wrappedMinutes = ((totalMinutes % 1440) + 1440) % 1440
+  return {
+    hour: Math.floor(wrappedMinutes / 60),
+    minute: wrappedMinutes % 60,
+    dayDelta
+  }
+}
+
+/**
+ * Builds the exact UTC-anchored Date instant corresponding to targetHHMM
+ * on a zoned calendar date shifted by dayOffset days in timezone.
+ */
+export function getZonedTargetInstant(
+  now: Date,
+  dayOffset: number,
+  targetHHMM: string,
+  timezone: TimezoneLabel = 'WIB'
+): { fireAt: Date; dateKey: string } {
+  const tzNow = getShiftedDate(now, timezone)
   const [hStr, mStr] = targetHHMM.split(':')
-  const target = new Date(now)
+  const targetHour = Number(hStr) || 0
+  const targetMinute = Number(mStr) || 0
+  const tzOffsetMinutes = TIMEZONE_UTC_OFFSETS[timezone] ?? 420
+
+  const utcCursor = new Date(
+    Date.UTC(
+      tzNow.getFullYear(),
+      tzNow.getMonth(),
+      tzNow.getDate() + dayOffset,
+      targetHour,
+      targetMinute,
+      0,
+      0
+    )
+  )
+  const dateKey = `${utcCursor.getUTCFullYear()}-${pad2(utcCursor.getUTCMonth() + 1)}-${pad2(utcCursor.getUTCDate())}`
+  const fireAt = new Date(utcCursor.getTime() - tzOffsetMinutes * 60_000)
+  return { fireAt, dateKey }
+}
+
+export function getCountdownSeconds(
+  now: Date,
+  targetHHMM: string,
+  timezone?: TimezoneLabel
+): number {
+  const reference = timezone ? getShiftedDate(now, timezone) : now
+  const [hStr, mStr] = targetHHMM.split(':')
+  const target = new Date(reference)
   target.setHours(Number(hStr) || 0, Number(mStr) || 0, 0, 0)
-  const diffMs = target.getTime() - now.getTime()
+  const diffMs = target.getTime() - reference.getTime()
   return diffMs > 0 ? Math.floor(diffMs / 1000) : 0
 }
 
@@ -136,11 +224,12 @@ export function isWorkdayActive(
   if (record?.isHolidayOverride || record?.status === 'libur') {
     return false
   }
-  const dateKey = toLocalDateKey(date)
+  const tzDate = getShiftedDate(date, schedule.timezone)
+  const dateKey = toLocalDateKey(tzDate)
   if (schedule.syncNationalHolidays && getNationalHolidayName(dateKey)) {
     return false
   }
-  return schedule.workDays.includes(getIsoWeekday(date))
+  return schedule.workDays.includes(getIsoWeekday(tzDate))
 }
 
 /**
@@ -155,7 +244,8 @@ export function shouldTriggerCatchUp(
 ): boolean {
   if (!isWorkdayActive(now, schedule, record)) return false
   if (record?.status === 'terisi') return false
-  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  const tzNow = getShiftedDate(now, schedule.timezone)
+  const nowMinutes = tzNow.getHours() * 60 + tzNow.getMinutes()
   const checkMinutes = parseTimeToMinutes(schedule.monevCheckTime)
   return nowMinutes >= checkMinutes
 }
@@ -178,9 +268,10 @@ export function shouldTriggerAutoFill2300(
   ) {
     return false
   }
-  const todayKey = toLocalDateKey(now)
+  const tzNow = getShiftedDate(now, schedule.timezone)
+  const todayKey = toLocalDateKey(tzNow)
   if (schedule.lastAutoFilledDate === todayKey) return false
-  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  const nowMinutes = tzNow.getHours() * 60 + tzNow.getMinutes()
   const autoFillMinutes = parseTimeToMinutes(schedule.autoFillTime || '23:00')
   return nowMinutes >= autoFillMinutes
 }

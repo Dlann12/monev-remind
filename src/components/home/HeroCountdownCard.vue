@@ -21,6 +21,7 @@ interface Emits {
   openPortal: []
   syncNow: []
   openConnectModal: []
+  openQuickFill: []
 }
 
 const props = defineProps<Props>()
@@ -222,6 +223,16 @@ const lastSyncLabel = computed(() => {
           <span>
             {{ isFilled ? 'Buka Portal Monev Kemnaker' : 'Buka & Isi Monev Sekarang' }}
           </span>
+        </button>
+
+        <button
+          v-if="!isFilled && !isHoliday"
+          type="button"
+          class="w-full bg-surface-container-lowest text-primary font-label-lg text-label-lg py-3 px-4 rounded-xl shadow-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
+          @click="emit('openQuickFill')"
+        >
+          <span class="material-symbols-outlined text-[19px]">bolt</span>
+          <span>Isi Cepat (Salin Kegiatan Kemarin)</span>
         </button>
 
         <button

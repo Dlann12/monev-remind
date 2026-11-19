@@ -10,8 +10,10 @@ import AlarmPopupModal from '@/components/modals/AlarmPopupModal.vue'
 import NotificationsModal from '@/components/modals/NotificationsModal.vue'
 import PortalConnectModal from '@/components/modals/PortalConnectModal.vue'
 import ProfileModal from '@/components/modals/ProfileModal.vue'
+import QuickFillModal from '@/components/modals/QuickFillModal.vue'
 import { useMagangStore } from '@/composables/useMagangStore'
 import { useReminderEngine } from '@/composables/useReminderEngine'
+import type { LatestDailyLogDraft } from '@/services/monevPortalService'
 import type { AppTab } from '@/types/app'
 
 const store = useMagangStore()
@@ -21,6 +23,7 @@ const activeTab = shallowRef<AppTab>('beranda')
 const isNotificationsOpen = shallowRef(false)
 const isProfileOpen = shallowRef(false)
 const isConnectPortalOpen = shallowRef(false)
+const isQuickFillOpen = shallowRef(false)
 const toastMessage = shallowRef('')
 
 function showToast(msg: string) {
@@ -65,6 +68,15 @@ async function handleDisconnectPortal() {
   isProfileOpen.value = false
   activeTab.value = 'beranda'
   showToast('Berhasil keluar dari sesi MagangHub.')
+}
+
+async function handleQuickFillSubmit(draft: LatestDailyLogDraft) {
+  const res = await store.submitCustomMonevToday(draft)
+  showToast(res.message)
+  if (res.outcome === 'submitted' || res.outcome === 'already_filled') {
+    reminder.dismissAlert()
+    isQuickFillOpen.value = false
+  }
 }
 
 async function handleTestAlarm() {
@@ -136,6 +148,7 @@ async function handleTestAlarm() {
           @open-portal="handleOpenPortal"
           @sync-now="handleSyncNow"
           @open-connect-modal="isConnectPortalOpen = true"
+          @open-quick-fill="isQuickFillOpen = true"
           @navigate-tab="activeTab = $event"
         />
 
@@ -210,6 +223,15 @@ async function handleTestAlarm() {
           }
         "
         @disconnect="handleDisconnectPortal"
+      />
+
+      <QuickFillModal
+        v-if="isQuickFillOpen"
+        :initial-draft="store.latestLogDraft.value"
+        :today-key="store.todayKey.value"
+        :is-submitting="store.isAutoFilling.value"
+        @close="isQuickFillOpen = false"
+        @submit="handleQuickFillSubmit"
       />
     </template>
 

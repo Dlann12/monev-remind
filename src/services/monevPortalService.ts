@@ -5,9 +5,10 @@ import {
   iOSAnimation,
   iOSViewStyle
 } from '@capacitor/inappbrowser'
-import type { MonevDayStatus, MonevRecord } from '@/types/app'
+import type { MonevDayStatus, MonevRecord, TimezoneLabel } from '@/types/app'
 import {
   INDONESIAN_HOLIDAYS,
+  convertTimeFromTzToDeviceLocal,
   getIsoWeekday,
   toLocalDateKey
 } from '@/utils/dateTime'
@@ -81,8 +82,58 @@ export interface LatestDailyLogDraft {
   obstacles: string
 }
 
+export const MONEV_MIN_CHARS = 100
+
+const MONEV_DEFAULT_TEXT: Record<'activity' | 'lesson' | 'obstacles', string> = {
+  activity:
+    'Melaksanakan rangkaian kegiatan operasional harian magang sesuai arahan mentor serta memastikan seluruh target tugas selesai tepat waktu.',
+  lesson:
+    'Memperoleh pemahaman praktis mengenai alur kerja tim, koordinasi operasional, komunikasi profesional, serta standar penyelesaian tugas harian di lingkungan magang.',
+  obstacles:
+    'Tidak terdapat kendala signifikan selama pelaksanaan kegiatan hari ini; seluruh koordinasi pekerjaan dan penyelesaian tugas bersama tim berjalan lancar sesuai rencana.'
+}
+
+const MONEV_PAD_SUFFIX: Record<'activity' | 'lesson' | 'obstacles', string> = {
+  activity:
+    'Kegiatan dilaksanakan secara konsisten bersama tim sesuai arahan mentor lapangan dan target evaluasi harian program magang.',
+  lesson:
+    'Pembelajaran ini meningkatkan pemahaman terhadap alur kerja tim, standar kualitas operasional, serta ketepatan koordinasi harian di tempat magang.',
+  obstacles:
+    'Kendala yang ditemui dapat diatasi dengan baik melalui koordinasi bersama mentor dan rekan tim sehingga seluruh tugas harian tetap berjalan lancar.'
+}
+
+export function ensureMinMonevLength(
+  text: string,
+  kind: 'activity' | 'lesson' | 'obstacles'
+): string {
+  const cleaned = (text || '').replace(/\s+/g, ' ').trim()
+  if (cleaned.length >= MONEV_MIN_CHARS) return cleaned
+  if (!cleaned) return MONEV_DEFAULT_TEXT[kind]
+  const sep = /[.!?]$/.test(cleaned) ? ' ' : '. '
+  return `${cleaned}${sep}${MONEV_PAD_SUFFIX[kind]}`
+}
+
+export function normalizeDailyLogDraftForSubmit(
+  draft?: Partial<LatestDailyLogDraft> | null
+): LatestDailyLogDraft {
+  return {
+    sourceDate: draft?.sourceDate || '',
+    activity_log: ensureMinMonevLength(draft?.activity_log ?? '', 'activity'),
+    lesson_learned: ensureMinMonevLength(draft?.lesson_learned ?? '', 'lesson'),
+    obstacles: ensureMinMonevLength(draft?.obstacles ?? '', 'obstacles')
+  }
+}
+
+export interface DeviceAlarmPermissions {
+  canScheduleExactAlarms: boolean
+  ignoringBatteryOptimizations: boolean
+}
+
 interface MonevSyncPlugin {
-  checkTodayStatus(options?: { accessToken?: string }): Promise<{
+  checkTodayStatus(options?: {
+    accessToken?: string
+    includeHistory?: boolean
+  }): Promise<{
     state: 'ok' | 'session_expired' | 'unavailable'
     hasAttendance?: boolean
     isScheduledOffDay?: boolean
@@ -104,6 +155,7 @@ interface MonevSyncPlugin {
     activityLog?: string
     lessonLearned?: string
     obstacles?: string
+    preferFallback?: boolean
   }): Promise<{
     state:
       | 'submitted'
@@ -124,6 +176,12 @@ interface MonevSyncPlugin {
     enabled: boolean
     hour: number
     minute: number
+    holidayOverrideDate?: string
+    workDaysCsv?: string
+  }): Promise<void>
+  getDeviceAlarmStatus(): Promise<DeviceAlarmPermissions>
+  openDeviceAlarmSettings(options?: {
+    target?: 'exact_alarm' | 'battery'
   }): Promise<void>
   clearPortalSession(): Promise<void>
 }
@@ -641,13 +699,17 @@ async function fetchWebDailyLogsInRange(
   return pages.flat()
 }
 
-async function runSingleCheck(accessToken?: string): Promise<MonevStatusCheckResult> {
+async function runSingleCheck(
+  accessToken?: string,
+  includeHistory = true
+): Promise<MonevStatusCheckResult> {
   const checkedAt = new Date().toISOString()
   const todayStr = toLocalDateKey(new Date())
 
   if (Capacitor.isNativePlatform()) {
     const res = await MonevSync.checkTodayStatus({
-      accessToken: accessToken?.trim() || ''
+      accessToken: accessToken?.trim() || '',
+      includeHistory
     })
 
     if (res.state === 'ok') {
@@ -658,22 +720,24 @@ async function runSingleCheck(accessToken?: string): Promise<MonevStatusCheckRes
             ? 'filled'
             : 'unfilled'
       const userProfile = parseMonevUserPayload(res.user)
-      const historyRecords = userProfile
-        ? buildCompleteMonevHistory({
-            startDate: userProfile.startDate,
-            endDate: userProfile.endDate,
-            todayKey: todayStr,
-            attendances: res.attendances ?? [],
-            dailyLogs: res.dailyLogs ?? [],
-            holidays:
-              res.holidays && res.holidays.length > 0 ? res.holidays : undefined,
-            offDays: userProfile.offDays,
-            provinceCode: userProfile.provinceCode,
-            regencyCode: userProfile.regencyCode
-          })
-        : res.attendances
-          ? parseMonevAttendancesPayload(res.attendances)
-          : undefined
+      const historyRecords = includeHistory
+        ? userProfile
+          ? buildCompleteMonevHistory({
+              startDate: userProfile.startDate,
+              endDate: userProfile.endDate,
+              todayKey: todayStr,
+              attendances: res.attendances ?? [],
+              dailyLogs: res.dailyLogs ?? [],
+              holidays:
+                res.holidays && res.holidays.length > 0 ? res.holidays : undefined,
+              offDays: userProfile.offDays,
+              provinceCode: userProfile.provinceCode,
+              regencyCode: userProfile.regencyCode
+            })
+          : res.attendances
+            ? parseMonevAttendancesPayload(res.attendances)
+            : undefined
+        : undefined
 
       return {
         outcome,
@@ -722,14 +786,16 @@ async function runSingleCheck(accessToken?: string): Promise<MonevStatusCheckRes
     }
     const [homeRes, userRes] = await Promise.all([
       fetch('/monev-api/users/me/home', { method: 'GET', headers }),
-      fetch('/monev-api/users/me', { method: 'GET', headers })
+      includeHistory
+        ? fetch('/monev-api/users/me', { method: 'GET', headers })
+        : Promise.resolve(null)
     ])
 
     if (
       homeRes.status === 401 ||
       homeRes.status === 403 ||
-      userRes.status === 401 ||
-      userRes.status === 403
+      userRes?.status === 401 ||
+      userRes?.status === 403
     ) {
       return {
         outcome: 'session_expired',
@@ -747,14 +813,14 @@ async function runSingleCheck(accessToken?: string): Promise<MonevStatusCheckRes
     }
 
     const homeJson = (await homeRes.json()) as MonevHomeApiPayload
-    const userJson = userRes.ok
+    const userJson = userRes?.ok
       ? ((await userRes.json()) as MonevUserApiPayload)
       : undefined
     const userProfile = parseMonevUserPayload(userJson)
     const outcome = parseMonevHomePayload(homeJson)
 
     let historyRecords: MonevRecord[] | undefined
-    if (userProfile?.portalUserId && userProfile.startDate) {
+    if (includeHistory && userProfile?.portalUserId && userProfile.startDate) {
       const endDate =
         userProfile.endDate && userProfile.endDate < todayStr
           ? userProfile.endDate
@@ -812,14 +878,16 @@ async function runSingleCheck(accessToken?: string): Promise<MonevStatusCheckRes
  */
 export async function checkMonevTodayStatus(
   accessToken?: string,
-  maxAttempts = 3
+  maxAttempts = 3,
+  options?: { includeHistory?: boolean }
 ): Promise<MonevStatusCheckResult> {
-  let lastResult = await runSingleCheck(accessToken)
+  const includeHistory = options?.includeHistory ?? true
+  let lastResult = await runSingleCheck(accessToken, includeHistory)
   let attempt = 1
 
   while (lastResult.outcome === 'unavailable' && attempt < maxAttempts) {
     await new Promise((resolve) => setTimeout(resolve, 1200 * attempt))
-    lastResult = await runSingleCheck(accessToken)
+    lastResult = await runSingleCheck(accessToken, includeHistory)
     attempt++
   }
 
@@ -827,28 +895,41 @@ export async function checkMonevTodayStatus(
 }
 
 /**
- * Auto-fills today's Monev attendance + daily log using the latest filled
- * activity prior to today (yesterday or most recent workday).
+ * Auto-fills today's Monev attendance + daily log using either a custom quick-fill draft
+ * or the latest filled activity prior to today (yesterday or most recent workday).
  */
 export async function autoSubmitMonevFromYesterday(options: {
   accessToken?: string
   targetDate?: string
   fallbackDraft?: LatestDailyLogDraft | null
+  customDraft?: LatestDailyLogDraft | null
 }): Promise<AutoFillMonevResult> {
   const targetDate = options.targetDate || toLocalDateKey(new Date())
+  const normalizedCustom = options.customDraft
+    ? normalizeDailyLogDraftForSubmit(options.customDraft)
+    : null
+  const normalizedFallback = options.fallbackDraft
+    ? normalizeDailyLogDraftForSubmit(options.fallbackDraft)
+    : null
 
   if (Capacitor.isNativePlatform()) {
+    const payloadDraft = normalizedCustom ?? normalizedFallback
     const res = await MonevSync.submitAutoMonev({
       accessToken: options.accessToken?.trim() || '',
       targetDate,
-      activityLog: options.fallbackDraft?.activity_log || '',
-      lessonLearned: options.fallbackDraft?.lesson_learned || '',
-      obstacles: options.fallbackDraft?.obstacles || ''
+      activityLog: payloadDraft?.activity_log || '',
+      lessonLearned: payloadDraft?.lesson_learned || '',
+      obstacles: payloadDraft?.obstacles || '',
+      preferFallback: Boolean(normalizedCustom)
     })
     return {
       outcome: res.state,
       submittedDate: res.submittedDate || targetDate,
-      copiedFromDate: res.copiedFromDate || options.fallbackDraft?.sourceDate || '',
+      copiedFromDate:
+        res.copiedFromDate ||
+        normalizedCustom?.sourceDate ||
+        options.fallbackDraft?.sourceDate ||
+        '',
       activityLog: res.activityLog,
       accessToken: res.accessToken,
       message: res.message || 'Proses auto-isi Monev selesai.'
@@ -901,29 +982,31 @@ export async function autoSubmitMonevFromYesterday(options: {
       }
     }
 
-    let draft: LatestDailyLogDraft | null = null
-    const userRes = await fetch('/monev-api/users/me', { method: 'GET', headers })
-    if (userRes.ok) {
-      const userJson = (await userRes.json()) as MonevUserApiPayload
-      const user = parseMonevUserPayload(userJson)
-      if (user?.portalUserId) {
-        const dt = new Date(`${targetDate}T12:00:00`)
-        dt.setDate(1)
-        const curMonth = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-01`
-        dt.setMonth(dt.getMonth() - 1)
-        const prevMonth = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-01`
-        const recentLogs = await fetchWebDailyLogsInRange(
-          user.portalUserId,
-          prevMonth,
-          curMonth,
-          headers
-        )
-        draft = findLatestDailyLogPayload(recentLogs, targetDate)
+    let draft: LatestDailyLogDraft | null = normalizedCustom
+    if (!draft) {
+      const userRes = await fetch('/monev-api/users/me', { method: 'GET', headers })
+      if (userRes.ok) {
+        const userJson = (await userRes.json()) as MonevUserApiPayload
+        const user = parseMonevUserPayload(userJson)
+        if (user?.portalUserId) {
+          const dt = new Date(`${targetDate}T12:00:00`)
+          dt.setDate(1)
+          const curMonth = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-01`
+          dt.setMonth(dt.getMonth() - 1)
+          const prevMonth = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-01`
+          const recentLogs = await fetchWebDailyLogsInRange(
+            user.portalUserId,
+            prevMonth,
+            curMonth,
+            headers
+          )
+          draft = findLatestDailyLogPayload(recentLogs, targetDate)
+        }
       }
     }
 
-    if (!draft && options.fallbackDraft) {
-      draft = options.fallbackDraft
+    if (!draft && normalizedFallback) {
+      draft = normalizedFallback
     }
 
     if (!draft) {
@@ -935,6 +1018,8 @@ export async function autoSubmitMonevFromYesterday(options: {
       }
     }
 
+    const readyDraft = normalizeDailyLogDraftForSubmit(draft)
+
     const postRes = await fetch('/monev-api/attendances/with-daily-log', {
       method: 'POST',
       headers: {
@@ -944,9 +1029,9 @@ export async function autoSubmitMonevFromYesterday(options: {
       body: JSON.stringify({
         date: targetDate,
         status: 'PRESENT',
-        activity_log: draft.activity_log,
-        lesson_learned: draft.lesson_learned,
-        obstacles: draft.obstacles
+        activity_log: readyDraft.activity_log,
+        lesson_learned: readyDraft.lesson_learned,
+        obstacles: readyDraft.obstacles
       })
     })
 
@@ -954,7 +1039,7 @@ export async function autoSubmitMonevFromYesterday(options: {
       return {
         outcome: 'session_expired',
         submittedDate: targetDate,
-        copiedFromDate: draft.sourceDate,
+        copiedFromDate: readyDraft.sourceDate,
         message: 'Sesi MagangHub habis saat mengirim auto-isi Monev.'
       }
     }
@@ -963,7 +1048,7 @@ export async function autoSubmitMonevFromYesterday(options: {
       return {
         outcome: 'unavailable',
         submittedDate: targetDate,
-        copiedFromDate: draft.sourceDate,
+        copiedFromDate: readyDraft.sourceDate,
         message: `Gagal kirim auto-isi (HTTP ${postRes.status}).`
       }
     }
@@ -971,10 +1056,12 @@ export async function autoSubmitMonevFromYesterday(options: {
     return {
       outcome: 'submitted',
       submittedDate: targetDate,
-      copiedFromDate: draft.sourceDate,
-      activityLog: draft.activity_log,
+      copiedFromDate: readyDraft.sourceDate,
+      activityLog: readyDraft.activity_log,
       accessToken: cleanToken,
-      message: `Auto-isi Monev 23:00 berhasil menyalin kegiatan tanggal ${draft.sourceDate}.`
+      message: normalizedCustom
+        ? 'Monev hari ini berhasil dikirim ke portal MagangHub.'
+        : `Auto-isi Monev 23:00 berhasil menyalin kegiatan tanggal ${readyDraft.sourceDate}.`
     }
   } catch {
     return {
@@ -988,13 +1075,49 @@ export async function autoSubmitMonevFromYesterday(options: {
 
 export async function syncNativeAutoFillSchedule(
   enabled: boolean,
-  timeHHMM = '23:00'
+  timeHHMM = '23:00',
+  options?: {
+    timezone?: TimezoneLabel
+    holidayOverrideDate?: string | null
+    workDays?: ReadonlyArray<number>
+  }
 ): Promise<void> {
   if (!Capacitor.isNativePlatform()) return
-  const [hStr, mStr] = timeHHMM.split(':')
-  const hour = Number.isFinite(Number(hStr)) ? Number(hStr) : 23
-  const minute = Number.isFinite(Number(mStr)) ? Number(mStr) : 0
-  await MonevSync.scheduleAutoFillAlarm({ enabled, hour, minute }).catch(() => {})
+  const { hour, minute } = convertTimeFromTzToDeviceLocal(
+    timeHHMM,
+    options?.timezone ?? 'WIB'
+  )
+  await MonevSync.scheduleAutoFillAlarm({
+    enabled,
+    hour,
+    minute,
+    holidayOverrideDate: options?.holidayOverrideDate || '',
+    workDaysCsv: (options?.workDays ?? [1, 2, 3, 4, 5]).join(',')
+  }).catch(() => {})
+}
+
+export async function checkDeviceAlarmPermissions(): Promise<DeviceAlarmPermissions> {
+  if (!Capacitor.isNativePlatform()) {
+    return {
+      canScheduleExactAlarms: true,
+      ignoringBatteryOptimizations: true
+    }
+  }
+  try {
+    return await MonevSync.getDeviceAlarmStatus()
+  } catch {
+    return {
+      canScheduleExactAlarms: true,
+      ignoringBatteryOptimizations: true
+    }
+  }
+}
+
+export async function openDeviceAlarmPermissionSettings(
+  target: 'exact_alarm' | 'battery'
+): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return
+  await MonevSync.openDeviceAlarmSettings({ target }).catch(() => {})
 }
 
 export interface OpenPortalOptions {

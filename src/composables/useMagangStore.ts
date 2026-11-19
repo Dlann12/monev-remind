@@ -17,9 +17,11 @@ import {
   computeInitials,
   findLatestDailyLogPayload,
   mapOffDaysToWorkDays,
+  normalizeDailyLogDraftForSubmit,
   openMonevPortalInApp,
   syncNativeAutoFillSchedule,
   type AutoFillMonevResult,
+  type LatestDailyLogDraft,
   type MonevStatusCheckResult
 } from '@/services/monevPortalService'
 import { sendTelegramReminder } from '@/services/telegramService'
@@ -36,7 +38,7 @@ import {
   isWorkdayActive,
   shouldTriggerCatchUp,
   syncAlarmRuleDisplay,
-  toLocalDateKey
+  toZonedDateKey
 } from '@/utils/dateTime'
 
 const isInitialized = shallowRef(false)
@@ -60,12 +62,18 @@ function createDefaultTodayRecord(dateKey: string): MonevRecord {
 }
 
 export function useMagangStore() {
-  const todayKey = computed(() => toLocalDateKey(new Date()))
+  const todayKey = computed(() =>
+    toZonedDateKey(new Date(), schedule.value.timezone)
+  )
 
   const todayRecord = computed<MonevRecord>(() => {
     const found = records.value.find((r) => r.date === todayKey.value)
     return found ?? createDefaultTodayRecord(todayKey.value)
   })
+
+  const latestLogDraft = computed<LatestDailyLogDraft | null>(() =>
+    findLatestDailyLogPayload(records.value, todayKey.value)
+  )
 
   const nationalHolidayToday = computed(() =>
     getNationalHolidayName(todayKey.value)
@@ -167,11 +175,19 @@ export function useMagangStore() {
     await syncNativeAlarms(
       alarms.value,
       schedule.value,
-      todayRecord.value.status === 'terisi'
+      todayRecord.value.status === 'terisi',
+      todayRecord.value
     )
     await syncNativeAutoFillSchedule(
       schedule.value.autoFillAt2300,
-      schedule.value.autoFillTime
+      schedule.value.autoFillTime,
+      {
+        timezone: schedule.value.timezone,
+        holidayOverrideDate: todayRecord.value.isHolidayOverride
+          ? todayKey.value
+          : null,
+        workDays: schedule.value.workDays
+      }
     )
   }
 
@@ -221,7 +237,9 @@ export function useMagangStore() {
     profile.value = next
   }
 
-  async function syncPortalStatus(): Promise<MonevStatusCheckResult> {
+  async function syncPortalStatus(options?: {
+    includeHistory?: boolean
+  }): Promise<MonevStatusCheckResult> {
     if (isSyncingPortal.value) {
       return {
         outcome: 'unavailable',
@@ -233,7 +251,11 @@ export function useMagangStore() {
     isSyncingPortal.value = true
     try {
       const wasFilledBefore = todayRecord.value.status === 'terisi'
-      const result = await checkMonevTodayStatus(profile.value.portalAccessToken)
+      const result = await checkMonevTodayStatus(
+        profile.value.portalAccessToken,
+        3,
+        options
+      )
 
       const profilePatchFromApi: Partial<InternProfile> = result.userProfile
         ? {
@@ -439,6 +461,67 @@ export function useMagangStore() {
     }
   }
 
+  async function submitCustomMonevToday(
+    draft: LatestDailyLogDraft
+  ): Promise<AutoFillMonevResult> {
+    if (isAutoFilling.value) {
+      return {
+        outcome: 'unavailable',
+        submittedDate: todayKey.value,
+        copiedFromDate: '',
+        message: 'Pengiriman Monev sedang berjalan...'
+      }
+    }
+
+    isAutoFilling.value = true
+    try {
+      const ready = normalizeDailyLogDraftForSubmit(draft)
+      const res = await autoSubmitMonevFromYesterday({
+        accessToken: profile.value.portalAccessToken,
+        targetDate: todayKey.value,
+        customDraft: ready
+      })
+
+      if (res.accessToken && res.accessToken !== profile.value.portalAccessToken) {
+        await updateProfile({ portalAccessToken: res.accessToken })
+      }
+
+      if (res.outcome === 'submitted') {
+        await upsertRecord({
+          date: todayKey.value,
+          status: 'terisi',
+          filledAt: new Date().toISOString(),
+          approvalStatus: 'SUBMITTED',
+          activityLog: res.activityLog ?? ready.activity_log,
+          lessonLearned: ready.lesson_learned,
+          obstacles: ready.obstacles,
+          isAutoFilled: false,
+          isHolidayOverride: false
+        })
+        await syncAlarmsToDevice()
+        await addNotification({
+          title: 'Isi Cepat Monev Berhasil',
+          body: 'Laporan Monev harian berhasil dikirim ke portal MagangHub.',
+          type: 'info'
+        })
+        await syncPortalStatus({ includeHistory: false })
+      } else if (res.outcome === 'already_filled') {
+        await syncPortalStatus({ includeHistory: false })
+      } else if (res.outcome === 'session_expired') {
+        await updateProfile({
+          portalSyncState: 'session_expired',
+          sessionLastVerifiedAt: null,
+          lastPortalSyncNote: res.message,
+          portalAccessToken: ''
+        })
+      }
+
+      return res
+    } finally {
+      isAutoFilling.value = false
+    }
+  }
+
   async function openPortalForLogin(
     onSyncComplete?: (res: MonevStatusCheckResult) => void
   ): Promise<void> {
@@ -626,6 +709,7 @@ export function useMagangStore() {
     notifications: readonly(notifications),
     todayKey,
     todayRecord,
+    latestLogDraft,
     nationalHolidayToday,
     isTodayWorkday,
     activeAlarmsCount,
@@ -641,6 +725,7 @@ export function useMagangStore() {
     updateProfile,
     syncPortalStatus,
     runAutoFill2300,
+    submitCustomMonevToday,
     openPortalForLogin,
     openPortalAndSync,
     connectWithAccessToken,

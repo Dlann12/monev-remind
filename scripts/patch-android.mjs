@@ -29,12 +29,13 @@ if (missing.length > 0) {
   console.log(`Added ${missing.length} permissions to AndroidManifest.xml`)
 }
 
+manifest = manifest.replace(/\s*android:usesCleartextTraffic="true"/g, '')
 if (!manifest.includes('android:networkSecurityConfig')) {
   manifest = manifest.replace(
     '<application',
-    '<application\n        android:networkSecurityConfig="@xml/network_security_config"\n        android:usesCleartextTraffic="true"'
+    '<application\n        android:networkSecurityConfig="@xml/network_security_config"'
   )
-  console.log('Added networkSecurityConfig & usesCleartextTraffic to AndroidManifest.xml')
+  console.log('Added networkSecurityConfig to AndroidManifest.xml')
 }
 
 if (!manifest.includes('AutoMonevReceiver')) {
@@ -349,6 +350,31 @@ final class MonevApiHelper {
         return best;
     }
 
+    static String ensureMin100Chars(String raw, String kind) {
+        String cleaned = raw == null ? "" : raw.replaceAll("\\\\s+", " ").trim();
+        if (cleaned.length() >= 100) return cleaned;
+        if (cleaned.isEmpty()) {
+            if ("lesson".equals(kind)) {
+                return "Memperoleh pemahaman praktis mengenai alur kerja tim, koordinasi operasional, komunikasi profesional, serta standar penyelesaian tugas harian di lingkungan magang.";
+            }
+            if ("obstacles".equals(kind)) {
+                return "Tidak terdapat kendala signifikan selama pelaksanaan kegiatan hari ini; seluruh koordinasi pekerjaan dan penyelesaian tugas bersama tim berjalan lancar sesuai rencana.";
+            }
+            return "Melaksanakan rangkaian kegiatan operasional harian magang sesuai arahan mentor serta memastikan seluruh target tugas selesai tepat waktu.";
+        }
+        String suffix;
+        if ("lesson".equals(kind)) {
+            suffix = "Pembelajaran ini meningkatkan pemahaman terhadap alur kerja tim, standar kualitas operasional, serta ketepatan koordinasi harian di tempat magang.";
+        } else if ("obstacles".equals(kind)) {
+            suffix = "Kendala yang ditemui dapat diatasi dengan baik melalui koordinasi bersama mentor dan rekan tim sehingga seluruh tugas harian tetap berjalan lancar.";
+        } else {
+            suffix = "Kegiatan dilaksanakan secara konsisten bersama tim sesuai arahan mentor lapangan dan target evaluasi harian program magang.";
+        }
+        char last = cleaned.charAt(cleaned.length() - 1);
+        String sep = (last == '.' || last == '!' || last == '?') ? " " : ". ";
+        return cleaned + sep + suffix;
+    }
+
     static AutoFillResult executeAutoFillToday(
         Context context,
         String cachedToken,
@@ -356,6 +382,26 @@ final class MonevApiHelper {
         String fallbackActivityLog,
         String fallbackLessonLearned,
         String fallbackObstacles
+    ) {
+        return executeAutoFillToday(
+            context,
+            cachedToken,
+            targetDateOverride,
+            fallbackActivityLog,
+            fallbackLessonLearned,
+            fallbackObstacles,
+            false
+        );
+    }
+
+    static AutoFillResult executeAutoFillToday(
+        Context context,
+        String cachedToken,
+        String targetDateOverride,
+        String fallbackActivityLog,
+        String fallbackLessonLearned,
+        String fallbackObstacles,
+        boolean preferFallback
     ) {
         String todayStr = (targetDateOverride != null && targetDateOverride.length() >= 10)
             ? targetDateOverride.substring(0, 10)
@@ -404,42 +450,52 @@ final class MonevApiHelper {
                 return filledRes;
             }
 
-            HttpResult userRes = requestJson(API_BASE + "/users/me", "GET", cookies, token, null);
-            String userId = "";
-            if (userRes.status >= 200 && userRes.status < 300 && userRes.body != null) {
-                JSONObject userRoot = new JSONObject(userRes.body);
-                JSONObject u = userRoot.has("data") && !userRoot.isNull("data")
-                    ? userRoot.getJSONObject("data")
-                    : userRoot;
-                userId = u.optString("id", "");
-            }
-
             String activityLog = "";
             String lessonLearned = "";
             String obstacles = "";
             String copiedFromDate = "";
 
-            if (!userId.isEmpty()) {
-                JSONObject latestLog = findLatestDailyLogBefore(userId, todayStr, cookies, token);
-                if (latestLog != null) {
-                    copiedFromDate = latestLog.optString("date", "").length() >= 10
-                        ? latestLog.optString("date", "").substring(0, 10)
-                        : "";
-                    activityLog = latestLog.optString("activity_log", "").trim();
-                    lessonLearned = latestLog.optString("lesson_learned", "").trim();
-                    obstacles = latestLog.optString("obstacles", "").trim();
-                }
-            }
-
-            if (activityLog.isEmpty() && fallbackActivityLog != null && !fallbackActivityLog.trim().isEmpty()) {
+            if (preferFallback && fallbackActivityLog != null && !fallbackActivityLog.trim().isEmpty()) {
                 activityLog = fallbackActivityLog.trim();
                 lessonLearned = fallbackLessonLearned != null ? fallbackLessonLearned.trim() : "";
                 obstacles = fallbackObstacles != null ? fallbackObstacles.trim() : "";
+            } else {
+                HttpResult userRes = requestJson(API_BASE + "/users/me", "GET", cookies, token, null);
+                String userId = "";
+                if (userRes.status >= 200 && userRes.status < 300 && userRes.body != null) {
+                    JSONObject userRoot = new JSONObject(userRes.body);
+                    JSONObject u = userRoot.has("data") && !userRoot.isNull("data")
+                        ? userRoot.getJSONObject("data")
+                        : userRoot;
+                    userId = u.optString("id", "");
+                }
+
+                if (!userId.isEmpty()) {
+                    JSONObject latestLog = findLatestDailyLogBefore(userId, todayStr, cookies, token);
+                    if (latestLog != null) {
+                        copiedFromDate = latestLog.optString("date", "").length() >= 10
+                            ? latestLog.optString("date", "").substring(0, 10)
+                            : "";
+                        activityLog = latestLog.optString("activity_log", "").trim();
+                        lessonLearned = latestLog.optString("lesson_learned", "").trim();
+                        obstacles = latestLog.optString("obstacles", "").trim();
+                    }
+                }
+
+                if (activityLog.isEmpty() && fallbackActivityLog != null && !fallbackActivityLog.trim().isEmpty()) {
+                    activityLog = fallbackActivityLog.trim();
+                    lessonLearned = fallbackLessonLearned != null ? fallbackLessonLearned.trim() : "";
+                    obstacles = fallbackObstacles != null ? fallbackObstacles.trim() : "";
+                }
             }
 
             if (activityLog.isEmpty()) {
                 return AutoFillResult.error("no_previous_log", "no_previous_log", 200, "Belum ada kegiatan kemarin yang bisa disalin.");
             }
+
+            activityLog = ensureMin100Chars(activityLog, "activity");
+            lessonLearned = ensureMin100Chars(lessonLearned, "lesson");
+            obstacles = ensureMin100Chars(obstacles, "obstacles");
 
             JSONObject payload = new JSONObject();
             payload.put("date", todayStr);
@@ -469,9 +525,11 @@ final class MonevApiHelper {
                     "submitted",
                     "",
                     postRes.status,
-                    copiedFromDate.isEmpty()
-                        ? "Auto-isi Monev 23:00 berhasil dikirim."
-                        : "Auto-isi Monev 23:00 berhasil menyalin kegiatan " + copiedFromDate + ".",
+                    preferFallback
+                        ? "Monev hari ini berhasil dikirim ke portal MagangHub."
+                        : copiedFromDate.isEmpty()
+                            ? "Auto-isi Monev 23:00 berhasil dikirim."
+                            : "Auto-isi Monev 23:00 berhasil menyalin kegiatan " + copiedFromDate + ".",
                     token
                 );
                 ok.submittedDate = todayStr;
@@ -649,8 +707,14 @@ final class MonevApiHelper {
 
 const monevSyncJava = `package id.go.kemnaker.maganghub.reminder;
 
+import android.app.AlarmManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
+import android.os.Build;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.webkit.CookieManager;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -679,6 +743,7 @@ public class MonevSyncPlugin extends Plugin {
     @PluginMethod
     public void checkTodayStatus(final PluginCall call) {
         final String cachedToken = call.getString("accessToken", "");
+        final boolean includeHistory = Boolean.TRUE.equals(call.getBoolean("includeHistory", true));
         executor.execute(() -> {
             try {
                 MonevApiHelper.AuthContext auth = MonevApiHelper.resolveAuthenticatedSession(cachedToken);
@@ -748,55 +813,57 @@ public class MonevSyncPlugin extends Plugin {
                 JSONArray dailyLogsArr = new JSONArray();
                 JSONArray holidaysArr = new JSONArray();
 
-                MonevApiHelper.HttpResult userRes = MonevApiHelper.requestJson(
-                    MonevApiHelper.API_BASE + "/users/me",
-                    "GET",
-                    apiCookies,
-                    token,
-                    null
-                );
+                if (includeHistory) {
+                    MonevApiHelper.HttpResult userRes = MonevApiHelper.requestJson(
+                        MonevApiHelper.API_BASE + "/users/me",
+                        "GET",
+                        apiCookies,
+                        token,
+                        null
+                    );
 
-                if (userRes.status >= 200 && userRes.status < 300 && userRes.body != null) {
-                    JSONObject userRoot = new JSONObject(userRes.body);
-                    JSONObject u = userRoot.has("data") && !userRoot.isNull("data")
-                        ? userRoot.getJSONObject("data")
-                        : userRoot;
-                    String userId = u.optString("id", "");
-                    String startRaw = u.optString("internship_start_date", "");
-                    String endRaw = u.optString("internship_end_date", "");
+                    if (userRes.status >= 200 && userRes.status < 300 && userRes.body != null) {
+                        JSONObject userRoot = new JSONObject(userRes.body);
+                        JSONObject u = userRoot.has("data") && !userRoot.isNull("data")
+                            ? userRoot.getJSONObject("data")
+                            : userRoot;
+                        String userId = u.optString("id", "");
+                        String startRaw = u.optString("internship_start_date", "");
+                        String endRaw = u.optString("internship_end_date", "");
 
-                    userObj.put("id", userId);
-                    userObj.put("name", u.optString("name", ""));
-                    userObj.put("user_type", u.optString("user_type", ""));
-                    userObj.put("company", u.optString("company", ""));
-                    userObj.put("internship_company", u.optString("internship_company", ""));
-                    userObj.put("internship_position", u.optString("internship_position", ""));
-                    userObj.put("position", u.optString("position", ""));
-                    userObj.put("photo_url", u.optString("photo_url", ""));
-                    userObj.put("internship_start_date", startRaw);
-                    userObj.put("internship_end_date", endRaw);
-                    userObj.put("internship_location_province_code", u.optString("internship_location_province_code", ""));
-                    userObj.put("internship_location_regency_code", u.optString("internship_location_regency_code", ""));
-                    if (u.has("off_days") && !u.isNull("off_days")) {
-                        userObj.put("off_days", u.getJSONArray("off_days"));
-                    }
-
-                    if (!userId.isEmpty() && startRaw.length() >= 10) {
-                        String startDate = startRaw.substring(0, 10);
-                        String todayStr = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
-                        String endDate = endRaw.length() >= 10 && endRaw.substring(0, 10).compareTo(todayStr) < 0
-                            ? endRaw.substring(0, 10)
-                            : todayStr;
-                        if (endDate.compareTo(startDate) >= 0) {
-                            attendancesArr = MonevApiHelper.fetchPaginatedAttendances(
-                                userId, startDate, endDate, apiCookies, token
-                            );
-                            dailyLogsArr = MonevApiHelper.fetchDailyLogsInRange(
-                                userId, startDate, endDate, apiCookies, token
-                            );
+                        userObj.put("id", userId);
+                        userObj.put("name", u.optString("name", ""));
+                        userObj.put("user_type", u.optString("user_type", ""));
+                        userObj.put("company", u.optString("company", ""));
+                        userObj.put("internship_company", u.optString("internship_company", ""));
+                        userObj.put("internship_position", u.optString("internship_position", ""));
+                        userObj.put("position", u.optString("position", ""));
+                        userObj.put("photo_url", u.optString("photo_url", ""));
+                        userObj.put("internship_start_date", startRaw);
+                        userObj.put("internship_end_date", endRaw);
+                        userObj.put("internship_location_province_code", u.optString("internship_location_province_code", ""));
+                        userObj.put("internship_location_regency_code", u.optString("internship_location_regency_code", ""));
+                        if (u.has("off_days") && !u.isNull("off_days")) {
+                            userObj.put("off_days", u.getJSONArray("off_days"));
                         }
+
+                        if (!userId.isEmpty() && startRaw.length() >= 10) {
+                            String startDate = startRaw.substring(0, 10);
+                            String todayStr = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+                            String endDate = endRaw.length() >= 10 && endRaw.substring(0, 10).compareTo(todayStr) < 0
+                                ? endRaw.substring(0, 10)
+                                : todayStr;
+                            if (endDate.compareTo(startDate) >= 0) {
+                                attendancesArr = MonevApiHelper.fetchPaginatedAttendances(
+                                    userId, startDate, endDate, apiCookies, token
+                                );
+                                dailyLogsArr = MonevApiHelper.fetchDailyLogsInRange(
+                                    userId, startDate, endDate, apiCookies, token
+                                );
+                            }
+                        }
+                        holidaysArr = MonevApiHelper.fetchPaginatedHolidays(apiCookies, token);
                     }
-                    holidaysArr = MonevApiHelper.fetchPaginatedHolidays(apiCookies, token);
                 }
 
                 SharedPreferences prefs = getContext().getSharedPreferences(
@@ -809,10 +876,12 @@ public class MonevSyncPlugin extends Plugin {
                 res.put("isScheduledOffDay", homeData.optBoolean("is_scheduled_off_day", false));
                 res.put("isHoliday", homeData.optBoolean("is_holiday", false));
                 res.put("accessToken", token);
-                res.put("user", userObj);
-                res.put("attendances", attendancesArr);
-                res.put("dailyLogs", dailyLogsArr);
-                res.put("holidays", holidaysArr);
+                if (includeHistory) {
+                    res.put("user", userObj);
+                    res.put("attendances", attendancesArr);
+                    res.put("dailyLogs", dailyLogsArr);
+                    res.put("holidays", holidaysArr);
+                }
                 res.put("lastAutoSubmittedDate", prefs.getString("last_submitted_date", ""));
                 res.put("lastAutoCopiedFromDate", prefs.getString("last_copied_from", ""));
                 call.resolve(res);
@@ -832,6 +901,7 @@ public class MonevSyncPlugin extends Plugin {
         final String fallbackActivityLog = call.getString("activityLog", "");
         final String fallbackLessonLearned = call.getString("lessonLearned", "");
         final String fallbackObstacles = call.getString("obstacles", "");
+        final boolean preferFallback = Boolean.TRUE.equals(call.getBoolean("preferFallback", false));
 
         executor.execute(() -> {
             MonevApiHelper.AutoFillResult result = MonevApiHelper.executeAutoFillToday(
@@ -840,7 +910,8 @@ public class MonevSyncPlugin extends Plugin {
                 targetDate,
                 fallbackActivityLog,
                 fallbackLessonLearned,
-                fallbackObstacles
+                fallbackObstacles,
+                preferFallback
             );
             JSObject res = new JSObject();
             res.put("state", result.state);
@@ -860,6 +931,8 @@ public class MonevSyncPlugin extends Plugin {
         boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", true));
         int hour = call.getInt("hour", 23);
         int minute = call.getInt("minute", 0);
+        String holidayOverrideDate = call.getString("holidayOverrideDate", "");
+        String workDaysCsv = call.getString("workDaysCsv", "1,2,3,4,5");
 
         SharedPreferences prefs = getContext().getSharedPreferences(
             MonevApiHelper.PREFS_NAME, Context.MODE_PRIVATE
@@ -868,9 +941,59 @@ public class MonevSyncPlugin extends Plugin {
             .putBoolean("auto_fill_enabled", enabled)
             .putInt("auto_fill_hour", hour)
             .putInt("auto_fill_minute", minute)
+            .putString("holiday_override_date", holidayOverrideDate != null ? holidayOverrideDate : "")
+            .putString("work_days_csv", workDaysCsv != null && !workDaysCsv.isEmpty() ? workDaysCsv : "1,2,3,4,5")
             .apply();
 
         AutoMonevReceiver.scheduleNext(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void getDeviceAlarmStatus(PluginCall call) {
+        Context ctx = getContext();
+        boolean canExact = true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
+            canExact = am != null && am.canScheduleExactAlarms();
+        }
+        boolean ignoringBattery = true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+            ignoringBattery = pm != null && pm.isIgnoringBatteryOptimizations(ctx.getPackageName());
+        }
+        JSObject res = new JSObject();
+        res.put("canScheduleExactAlarms", canExact);
+        res.put("ignoringBatteryOptimizations", ignoringBattery);
+        call.resolve(res);
+    }
+
+    @PluginMethod
+    public void openDeviceAlarmSettings(PluginCall call) {
+        String target = call.getString("target", "exact_alarm");
+        Context ctx = getContext();
+        Uri pkgUri = Uri.parse("package:" + ctx.getPackageName());
+        Intent intent = null;
+        if ("battery".equals(target) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, pkgUri);
+        }
+        try {
+            if (intent == null) {
+                intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri);
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(intent);
+        } catch (Exception ex) {
+            try {
+                Intent fallback = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri);
+                fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(fallback);
+            } catch (Exception ignored) {
+                // Ignore if no settings activity handles intent
+            }
+        }
         call.resolve();
     }
 
@@ -935,6 +1058,17 @@ public class AutoMonevReceiver extends BroadcastReceiver {
 
         final String todayStr = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
         if (todayStr.equals(prefs.getString("last_submitted_date", ""))) {
+            scheduleNext(context);
+            return;
+        }
+        if (todayStr.equals(prefs.getString("holiday_override_date", ""))) {
+            scheduleNext(context);
+            return;
+        }
+        String workDaysCsv = prefs.getString("work_days_csv", "1,2,3,4,5");
+        int calDay = Calendar.getInstance().get(Calendar.DAY_OF_WEEK);
+        int isoDay = (calDay == Calendar.SUNDAY) ? 7 : (calDay - 1);
+        if (!isIsoDayEnabled(workDaysCsv, isoDay)) {
             scheduleNext(context);
             return;
         }
@@ -1016,6 +1150,20 @@ public class AutoMonevReceiver extends BroadcastReceiver {
         if (am != null) {
             am.cancel(buildPendingIntent(context));
         }
+    }
+
+    private static boolean isIsoDayEnabled(String csv, int isoDay) {
+        if (csv == null || csv.trim().isEmpty()) {
+            return isoDay >= 1 && isoDay <= 5;
+        }
+        String target = String.valueOf(isoDay);
+        String[] parts = csv.split(",");
+        for (String part : parts) {
+            if (target.equals(part.trim())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static PendingIntent buildPendingIntent(Context context) {
