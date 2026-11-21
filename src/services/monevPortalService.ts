@@ -187,9 +187,12 @@ interface MonevSyncPlugin {
     alarms: Array<{
       id: string
       title: string
+      message?: string
       time: string
       enabled: boolean
       kind: 'primary' | 'snooze'
+      soundType?: string
+      vibrate?: boolean
     }>
     timezone: string
     workDaysCsv?: string

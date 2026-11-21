@@ -29,6 +29,7 @@ interface Emits {
   updateSchedule: [patch: Partial<ScheduleConfig>]
   toggleAlarm: [alarmId: string]
   updateAlarmTime: [alarmId: string, time: string]
+  customizeAlarm: [alarm: AlarmRule]
   toggleHolidayToday: []
   testAlarm: []
   updateProfile: [patch: Partial<InternProfile>]
@@ -408,37 +409,63 @@ function saveTelegramConfig() {
               </span>
             </div>
             <div class="min-w-0 flex-1">
-              <p class="font-label-md text-label-md text-on-surface font-semibold truncate">
-                {{ alarm.title }}
-              </p>
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <p class="font-label-md text-label-md text-on-surface font-semibold truncate">
+                  {{ alarm.title }}
+                </p>
+                <span
+                  v-if="alarm.customMessage"
+                  class="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary-container text-on-secondary-container font-medium"
+                >
+                  Pesan Kustom
+                </span>
+                <span
+                  v-if="alarm.soundType && alarm.soundType !== 'voice'"
+                  class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium"
+                >
+                  {{ alarm.soundType === 'silent' ? 'Senyap' : alarm.soundType }}
+                </span>
+              </div>
               <p class="font-body-sm text-body-sm text-on-surface-variant truncate">
                 {{ alarm.subtitle }}
               </p>
             </div>
           </div>
 
-          <input
-            :value="alarm.time"
-            type="time"
-            aria-label="Ubah jam alarm"
-            class="bg-surface-container-lowest rounded-md px-1.5 py-1 font-label-md text-label-md text-primary w-20 text-center"
-            @input="handleAlarmTimeInput(alarm.id, alarm.time, $event)"
-            @change="handleAlarmTimeInput(alarm.id, alarm.time, $event)"
-          />
+          <div class="flex items-center gap-1.5 flex-shrink-0">
+            <button
+              type="button"
+              class="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-variant/40 transition-colors"
+              title="Kustom Notifikasi & Suara"
+              aria-label="Kustom Notifikasi"
+              @click="emit('customizeAlarm', alarm)"
+            >
+              <span class="material-symbols-outlined text-[19px]">tune</span>
+            </button>
 
-          <button
-            type="button"
-            role="switch"
-            :aria-checked="alarm.enabled"
-            class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full transition-colors"
-            :class="alarm.enabled ? 'bg-secondary' : 'bg-outline-variant'"
-            @click="emit('toggleAlarm', alarm.id)"
-          >
-            <span
-              class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow transition mt-0.5 ml-0.5"
-              :class="alarm.enabled ? 'translate-x-5' : 'translate-x-0'"
+            <input
+              :value="alarm.time"
+              type="time"
+              aria-label="Ubah jam alarm"
+              class="bg-surface-container-lowest rounded-md px-1.5 py-1 font-label-md text-label-md text-primary w-20 text-center"
+              @input="handleAlarmTimeInput(alarm.id, alarm.time, $event)"
+              @change="handleAlarmTimeInput(alarm.id, alarm.time, $event)"
             />
-          </button>
+
+            <button
+              type="button"
+              role="switch"
+              :aria-checked="alarm.enabled"
+              class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full transition-colors"
+              :class="alarm.enabled ? 'bg-secondary' : 'bg-outline-variant'"
+              @click="emit('toggleAlarm', alarm.id)"
+            >
+              <span
+                class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow transition mt-0.5 ml-0.5"
+                :class="alarm.enabled ? 'translate-x-5' : 'translate-x-0'"
+              />
+            </button>
+          </div>
         </div>
       </div>
     </div>

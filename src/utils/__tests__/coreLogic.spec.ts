@@ -579,4 +579,27 @@ describe('Offline Monev Auto-Generator', () => {
       expect(result.releaseNotes).toBe('Fitur pembaruan otomatis')
     })
   })
+
+  describe('Custom alarm notifications, sound, and vibration settings', () => {
+    it('preserves customTitle in syncAlarmRuleDisplay when time or timezone changes', () => {
+      const baseAlarm = DEFAULT_ALARMS[0]
+      const updatedWithoutCustom = syncAlarmRuleDisplay(baseAlarm, '16:30', 'WIB')
+      expect(updatedWithoutCustom.title).toBe('Alarm Utama Monev (16:30)')
+
+      const customizedAlarm = {
+        ...baseAlarm,
+        customTitle: '🚨 Jangan Lupa Isi Monev Bro!',
+        customMessage: 'Ayo isi sebelum jam 5 sore.',
+        soundType: 'bell' as const,
+        vibrate: false
+      }
+      const updatedWithCustom = syncAlarmRuleDisplay(customizedAlarm, '16:30', 'WIB')
+      expect(updatedWithCustom.title).toBe('🚨 Jangan Lupa Isi Monev Bro!')
+      expect(updatedWithCustom.customTitle).toBe('🚨 Jangan Lupa Isi Monev Bro!')
+      expect(updatedWithCustom.customMessage).toBe('Ayo isi sebelum jam 5 sore.')
+      expect(updatedWithCustom.soundType).toBe('bell')
+      expect(updatedWithCustom.vibrate).toBe(false)
+      expect(updatedWithCustom.subtitle).toContain('Pukul 16:30 WIB')
+    })
+  })
 })

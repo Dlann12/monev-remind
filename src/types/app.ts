@@ -6,6 +6,8 @@ export type MonevDayStatus = 'belum' | 'terisi' | 'izin' | 'libur' | 'terlewat'
 
 export type AlarmKind = 'primary' | 'snooze'
 
+export type AlarmSoundType = 'voice' | 'chime' | 'bell' | 'system' | 'silent'
+
 export type PortalSyncState =
   | 'disconnected'
   | 'connected'
@@ -54,6 +56,10 @@ export interface AlarmRule {
   enabled: boolean
   kind: AlarmKind
   lastTriggeredDate?: string
+  customTitle?: string
+  customMessage?: string
+  soundType?: AlarmSoundType
+  vibrate?: boolean
 }
 
 export interface MonevRecord {

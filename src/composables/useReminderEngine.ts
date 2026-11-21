@@ -194,13 +194,21 @@ export function useReminderEngine() {
       }
 
       const isSessionWarn = store.isSessionExpired.value
-      const title = isSessionWarn ? 'Sesi MagangHub Habis' : alarm.title
+      const title = isSessionWarn
+        ? 'Sesi MagangHub Habis'
+        : (alarm.customTitle || alarm.title)
       const body = isSessionWarn
         ? 'Sesi MagangHub habis. Login & cek apakah Monev hari ini sudah diisi.'
-        : 'Jangan lupa isi monev! Absen Monev hari ini belum diisi.'
+        : (alarm.customMessage ||
+          'Jangan lupa isi monev! Absen Monev hari ini belum diisi.')
 
       showAlertBanner({ title, body, isSessionWarning: isSessionWarn })
-      await triggerImmediateAlert(title, body)
+      await triggerImmediateAlert(
+        title,
+        body,
+        alarm.soundType || 'voice',
+        alarm.vibrate !== false
+      )
       await store.addNotification({
         title,
         body,

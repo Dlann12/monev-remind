@@ -1680,10 +1680,20 @@ public class AlarmReceiver extends BroadcastReceiver {
             if (alarmTitle == null || alarmTitle.isEmpty()) {
                 alarmTitle = "Waktunya Isi Absen Monev!";
             }
-            String alarmBody = "Jangan lupa isi monev! Absen Monev MagangHub hari ini belum diisi.";
+            String alarmBody = intent.getStringExtra("alarm_body");
+            if (alarmBody == null || alarmBody.isEmpty()) {
+                alarmBody = "Jangan lupa isi monev! Absen Monev MagangHub hari ini belum diisi.";
+            }
+            String soundType = intent.getStringExtra("sound_type");
+            if (soundType == null || soundType.isEmpty()) {
+                soundType = "voice";
+            }
+            boolean vibrate = intent.getBooleanExtra("vibrate", true);
 
-            startAlarmSound(context);
-            postAlarmNotification(context, alarmTitle, alarmBody);
+            if (!"silent".equals(soundType)) {
+                startAlarmSound(context, soundType);
+            }
+            postAlarmNotification(context, alarmTitle, alarmBody, soundType, vibrate);
             scheduleNextAlarmClock(context);
         }
     }
@@ -1714,15 +1724,22 @@ public class AlarmReceiver extends BroadcastReceiver {
         } catch (Exception ignored) {}
     }
 
-    private static synchronized void startAlarmSound(Context context) {
+    private static synchronized void startAlarmSound(Context context, String soundType) {
         stopRingingInternal();
         try {
-            int rawSoundRes = context.getResources().getIdentifier(
-                "reminder_sound", "raw", context.getPackageName()
-            );
-            Uri soundUri = rawSoundRes != 0
-                ? Uri.parse("android.resource://" + context.getPackageName() + "/" + rawSoundRes)
-                : RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+            Uri soundUri;
+            if ("voice".equals(soundType)) {
+                int rawSoundRes = context.getResources().getIdentifier(
+                    "reminder_sound", "raw", context.getPackageName()
+                );
+                soundUri = rawSoundRes != 0
+                    ? Uri.parse("android.resource://" + context.getPackageName() + "/" + rawSoundRes)
+                    : RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+            } else if ("chime".equals(soundType)) {
+                soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+            } else {
+                soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+            }
 
             sMediaPlayer = new MediaPlayer();
             sMediaPlayer.setDataSource(context, soundUri);
@@ -1739,7 +1756,7 @@ public class AlarmReceiver extends BroadcastReceiver {
             sHandler.postDelayed(sAutoStopRunnable, 45000L);
         } catch (Exception ex) {
             try {
-                Uri fallbackUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                Uri fallbackUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
                 sMediaPlayer = MediaPlayer.create(context, fallbackUri);
                 if (sMediaPlayer != null) {
                     sMediaPlayer.start();
@@ -1773,7 +1790,7 @@ public class AlarmReceiver extends BroadcastReceiver {
         releaseWakeLock();
     }
 
-    private static void postAlarmNotification(Context context, String title, String body) {
+    private static void postAlarmNotification(Context context, String title, String body, String soundType, boolean vibrate) {
         try {
             NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm == null) return;
@@ -1848,6 +1865,13 @@ public class AlarmReceiver extends BroadcastReceiver {
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Matikan Alarm", stopPendingIntent)
                 .addAction(android.R.drawable.ic_menu_edit, "Isi Monev", openPendingIntent);
 
+            if (soundUri != null && !"silent".equals(soundType)) {
+                builder.setSound(soundUri);
+            }
+            if (!vibrate) {
+                builder.setVibrate(new long[]{0});
+            }
+
             if (openPendingIntent != null) {
                 builder.setContentIntent(openPendingIntent);
                 builder.setFullScreenIntent(openPendingIntent, true);
@@ -1878,6 +1902,9 @@ public class AlarmReceiver extends BroadcastReceiver {
         long nowMillis = System.currentTimeMillis();
         long earliestTrigger = Long.MAX_VALUE;
         String nextTitle = "Pengingat Monev MagangHub";
+        String nextBody = "Jangan lupa isi monev! Absen Monev MagangHub hari ini belum diisi.";
+        String nextSoundType = "voice";
+        boolean nextVibrate = true;
         String nextTime = "";
         String nextId = "";
 
@@ -1929,7 +1956,13 @@ public class AlarmReceiver extends BroadcastReceiver {
                     long triggerMillis = triggerCal.getTimeInMillis();
                     if (triggerMillis > nowMillis + 5000L && triggerMillis < earliestTrigger) {
                         earliestTrigger = triggerMillis;
-                        nextTitle = obj.optString("title", "Pengingat Monev MagangHub");
+                        String customTitle = obj.optString("customTitle", "");
+                        nextTitle = !customTitle.isEmpty() ? customTitle : obj.optString("title", "Pengingat Monev MagangHub");
+                        String customMsg = obj.optString("customMessage", "");
+                        if (customMsg.isEmpty()) customMsg = obj.optString("message", "");
+                        nextBody = !customMsg.isEmpty() ? customMsg : "Jangan lupa isi monev! Absen Monev MagangHub hari ini belum diisi.";
+                        nextSoundType = obj.optString("soundType", "voice");
+                        nextVibrate = obj.optBoolean("vibrate", true);
                         nextTime = timeStr;
                         nextId = obj.optString("id", "");
                     }
@@ -1956,7 +1989,24 @@ public class AlarmReceiver extends BroadcastReceiver {
                 alarmIntent.setAction(ACTION_TRIGGER_MONEV_ALARM);
                 alarmIntent.putExtra("alarm_id", nextId);
                 alarmIntent.putExtra("alarm_title", nextTitle);
+                alarmIntent.putExtra("alarm_body", nextBody);
+                alarmIntent.putExtra("sound_type", nextSoundType);
+                alarmIntent.putExtra("vibrate", nextVibrate);
                 alarmIntent.putExtra("alarm_time", nextTime);
+
+                PendingIntent pi = PendingIntent.getBroadcast(
+                    context,
+                    ALARM_REQUEST_CODE,
+                    alarmIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                );
+
+                am.setAlarmClock(clockInfo, pi);
+            } else {
+                cancelAlarmClock(context);
+            }
+        } catch (Exception ignored) {}
+    }
 
                 PendingIntent pi = PendingIntent.getBroadcast(
                     context,

@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
 import { App } from '@capacitor/app'
-import type { AlarmRule, MonevRecord, ScheduleConfig } from '@/types/app'
+import type { AlarmRule, AlarmSoundType, MonevRecord, ScheduleConfig } from '@/types/app'
 import { playReminderChime } from '@/utils/audio'
 import { getZonedTargetInstant, isWorkdayActive } from '@/utils/dateTime'
 import { MonevSync } from '@/services/monevPortalService'
@@ -59,9 +59,11 @@ export async function requestNotificationPermission(): Promise<boolean> {
 
 export async function triggerImmediateAlert(
   title: string,
-  body: string
+  body: string,
+  soundType: AlarmSoundType = 'voice',
+  vibrate: boolean = true
 ): Promise<void> {
-  playReminderChime()
+  playReminderChime(soundType, vibrate)
 
   if (isNativePlatform()) {
     try {
@@ -73,7 +75,7 @@ export async function triggerImmediateAlert(
             title,
             body,
             channelId: MONEV_NOTIFICATION_CHANNEL_ID,
-            sound: MONEV_CUSTOM_SOUND_FILE,
+            sound: soundType === 'silent' ? undefined : MONEV_CUSTOM_SOUND_FILE,
             schedule: { at: new Date(Date.now() + 400) },
             smallIcon: 'ic_stat_alarm'
           }
@@ -128,10 +130,15 @@ export async function syncNativeAlarms(
     await MonevSync.syncNativeAlarmClocks({
       alarms: enabledList.map((a) => ({
         id: a.id,
-        title: a.title,
+        title: a.customTitle || a.title,
+        message:
+          a.customMessage ||
+          'Jangan lupa isi monev! Absen Monev MagangHub hari ini belum diisi.',
         time: a.time,
         enabled: a.enabled,
-        kind: a.kind
+        kind: a.kind,
+        soundType: a.soundType || 'voice',
+        vibrate: a.vibrate !== false
       })),
       timezone: schedule.timezone,
       workDaysCsv: schedule.workDays.join(','),
@@ -169,7 +176,7 @@ export async function syncNativeAlarms(
       title: string
       body: string
       channelId: string
-      sound: string
+      sound?: string
       smallIcon: string
       schedule: {
         at: Date
@@ -196,12 +203,17 @@ export async function syncNativeAlarms(
           todayRecord && todayRecord.date === dateKey ? todayRecord : null
         if (!isWorkdayActive(fireAt, schedule, recordForDay)) continue
 
+        const notifTitle = alarm.customTitle || alarm.title
+        const notifBody =
+          alarm.customMessage ||
+          'Monev MagangHub hari ini belum diisi. Jangan lupa isi monev sekarang!'
+
         notifications.push({
           id: 1000 + index * 10 + dayOffset,
-          title: alarm.title,
-          body: 'Monev MagangHub hari ini belum diisi. Jangan lupa isi monev sekarang!',
+          title: notifTitle,
+          body: notifBody,
           channelId: MONEV_NOTIFICATION_CHANNEL_ID,
-          sound: MONEV_CUSTOM_SOUND_FILE,
+          sound: alarm.soundType === 'silent' ? undefined : MONEV_CUSTOM_SOUND_FILE,
           smallIcon: 'ic_stat_alarm',
           schedule: {
             at: fireAt,

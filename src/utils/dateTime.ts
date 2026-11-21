@@ -306,7 +306,8 @@ export function syncAlarmRuleDisplay(
       : 'Pengingat ulang jika Monev belum diisi'
 
   const title =
-    alarm.kind === 'primary' ? `Alarm Utama Monev (${time})` : alarm.title
+    alarm.customTitle ||
+    (alarm.kind === 'primary' ? `Alarm Utama Monev (${time})` : alarm.title)
 
   return {
     ...alarm,

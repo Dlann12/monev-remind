@@ -217,6 +217,44 @@ export function useMagangStore() {
     }
   }
 
+  async function updateAlarmRule(
+    alarmId: string,
+    patch: Partial<AlarmRule>
+  ): Promise<void> {
+    const target = alarms.value.find((a) => a.id === alarmId)
+    if (!target) return
+    let updated: AlarmRule = { ...target, ...patch }
+    if (patch.time) {
+      updated = syncAlarmRuleDisplay(
+        updated,
+        patch.time,
+        schedule.value.timezone
+      )
+    }
+    await db.alarms.put(updated).catch(() => {})
+    alarms.value = alarms.value.map((a) => (a.id === alarmId ? updated : a))
+    if (patch.time && target.kind === 'primary') {
+      await updateSchedule({ monevCheckTime: patch.time })
+    } else {
+      await syncAlarmsToDevice()
+    }
+  }
+
+  async function resetAlarmRule(alarmId: string): Promise<void> {
+    const defaultItem = DEFAULT_ALARMS.find((a) => a.id === alarmId)
+    if (!defaultItem) return
+    const target = alarms.value.find((a) => a.id === alarmId)
+    if (!target) return
+    const updated: AlarmRule = {
+      ...defaultItem,
+      time: target.time,
+      enabled: target.enabled
+    }
+    await db.alarms.put(updated).catch(() => {})
+    alarms.value = alarms.value.map((a) => (a.id === alarmId ? updated : a))
+    await syncAlarmsToDevice()
+  }
+
   async function markAlarmTriggeredToday(alarmId: string): Promise<void> {
     const target = alarms.value.find((a) => a.id === alarmId)
     if (!target) return
@@ -681,11 +719,20 @@ export function useMagangStore() {
     body: string
     telegramResult?: { ok: boolean; error?: string }
   }> {
-    const title = `Pengingat Absen Monev (${schedule.value.monevCheckTime} ${schedule.value.timezone})`
+    const primary = alarms.value.find((a) => a.kind === 'primary')
+    const title =
+      primary?.customTitle ||
+      `Pengingat Absen Monev (${schedule.value.monevCheckTime} ${schedule.value.timezone})`
     const body =
+      primary?.customMessage ||
       'Jangan lupa isi monev MagangHub hari ini! Buka portal Kemnaker sekarang.'
 
-    await triggerImmediateAlert(title, body)
+    await triggerImmediateAlert(
+      title,
+      body,
+      primary?.soundType || 'voice',
+      primary?.vibrate !== false
+    )
     await addNotification({ title, body, type: 'alarm' })
 
     if (profile.value.telegramBotToken && profile.value.telegramChatId) {
@@ -722,6 +769,8 @@ export function useMagangStore() {
     initStore,
     toggleAlarm,
     updateAlarmTime,
+    updateAlarmRule,
+    resetAlarmRule,
     markAlarmTriggeredToday,
     updateProfile,
     syncPortalStatus,

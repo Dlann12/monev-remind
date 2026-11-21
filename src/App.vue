@@ -12,11 +12,12 @@ import PortalConnectModal from '@/components/modals/PortalConnectModal.vue'
 import ProfileModal from '@/components/modals/ProfileModal.vue'
 import QuickFillModal from '@/components/modals/QuickFillModal.vue'
 import UpdatePromptModal from '@/components/modals/UpdatePromptModal.vue'
+import CustomNotificationModal from '@/components/modals/CustomNotificationModal.vue'
 import { useMagangStore } from '@/composables/useMagangStore'
 import { useReminderEngine } from '@/composables/useReminderEngine'
 import { checkForAppUpdate, type AppUpdateInfo } from '@/services/updateService'
 import type { LatestDailyLogDraft } from '@/services/monevPortalService'
-import type { AppTab } from '@/types/app'
+import type { AlarmRule, AppTab } from '@/types/app'
 
 const store = useMagangStore()
 const reminder = useReminderEngine()
@@ -27,6 +28,7 @@ const isProfileOpen = shallowRef(false)
 const isConnectPortalOpen = shallowRef(false)
 const isQuickFillOpen = shallowRef(false)
 const availableUpdate = shallowRef<AppUpdateInfo | null>(null)
+const selectedAlarmForCustomization = shallowRef<AlarmRule | null>(null)
 const toastMessage = shallowRef('')
 
 function showToast(msg: string) {
@@ -34,6 +36,19 @@ function showToast(msg: string) {
   setTimeout(() => {
     if (toastMessage.value === msg) toastMessage.value = ''
   }, 3500)
+}
+
+async function handleSaveCustomAlarm(payload: Partial<AlarmRule>) {
+  if (!selectedAlarmForCustomization.value) return
+  await store.updateAlarmRule(selectedAlarmForCustomization.value.id, payload)
+  selectedAlarmForCustomization.value = null
+  showToast('Pengaturan notifikasi berhasil disimpan.')
+}
+
+async function handleResetCustomAlarm(alarmId: string) {
+  await store.resetAlarmRule(alarmId)
+  selectedAlarmForCustomization.value = null
+  showToast('Notifikasi dikembalikan ke pengaturan awal.')
 }
 
 async function handleCheckForUpdate(manual = false) {
@@ -188,6 +203,7 @@ async function handleTestAlarm() {
           @update-schedule="store.updateSchedule($event)"
           @toggle-alarm="store.toggleAlarm($event)"
           @update-alarm-time="(id, time) => store.updateAlarmTime(id, time)"
+          @customize-alarm="selectedAlarmForCustomization = $event"
           @toggle-holiday-today="store.toggleHolidayToday()"
           @test-alarm="handleTestAlarm"
           @update-profile="store.updateProfile($event)"
@@ -266,6 +282,15 @@ async function handleTestAlarm() {
         :update-info="availableUpdate"
         @close="availableUpdate = null"
         @toast="showToast"
+      />
+
+      <!-- Custom Notification & Sound Modal -->
+      <CustomNotificationModal
+        v-if="selectedAlarmForCustomization"
+        :alarm="selectedAlarmForCustomization"
+        @close="selectedAlarmForCustomization = null"
+        @save="handleSaveCustomAlarm"
+        @reset="handleResetCustomAlarm"
       />
     </template>
 

@@ -1,6 +1,8 @@
+import type { AlarmSoundType } from '@/types/app'
+
 let cachedReminderAudio: HTMLAudioElement | null = null
 
-function playFallbackWebAudioChime(): void {
+export function playWebAudioChime(): void {
   const AudioCtx =
     window.AudioContext ||
     (window as unknown as { webkitAudioContext?: typeof AudioContext })
@@ -22,7 +24,7 @@ function playFallbackWebAudioChime(): void {
       osc.frequency.setValueAtTime(freq, noteStart)
 
       gain.gain.setValueAtTime(0.001, noteStart)
-      gain.gain.exponentialRampToValueAtTime(0.18, noteStart + 0.03)
+      gain.gain.exponentialRampToValueAtTime(0.2, noteStart + 0.03)
       gain.gain.exponentialRampToValueAtTime(0.001, noteStart + 0.28)
 
       osc.connect(gain)
@@ -40,14 +42,57 @@ function playFallbackWebAudioChime(): void {
   }
 }
 
+export function playWebAudioBell(): void {
+  const AudioCtx =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext
+
+  if (!AudioCtx) return
+
+  try {
+    const ctx = new AudioCtx()
+    const notes = [659.25, 880.0, 1046.5, 1318.51]
+    const startAt = ctx.currentTime
+
+    notes.forEach((freq, idx) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      const noteStart = startAt + idx * 0.1
+
+      osc.type = 'triangle'
+      osc.frequency.setValueAtTime(freq, noteStart)
+
+      gain.gain.setValueAtTime(0.001, noteStart)
+      gain.gain.exponentialRampToValueAtTime(0.25, noteStart + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.001, noteStart + 0.35)
+
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+
+      osc.start(noteStart)
+      osc.stop(noteStart + 0.4)
+    })
+
+    setTimeout(() => {
+      ctx.close().catch(() => {})
+    }, 1000)
+  } catch {
+    // Fail silently
+  }
+}
+
 /**
- * Plays the custom "Jangan lupa isi monev!" MP3 alert sound (with Web Audio fallback)
- * and vibrates the device when supported.
+ * Plays the chosen reminder sound ('voice', 'chime', 'bell', 'system', 'silent')
+ * and vibrates the device when enabled.
  */
-export function playReminderChime(): void {
+export function playReminderChime(
+  soundType: AlarmSoundType = 'voice',
+  vibrate: boolean = true
+): void {
   if (typeof window === 'undefined') return
 
-  if ('vibrate' in navigator) {
+  if (vibrate && 'vibrate' in navigator) {
     try {
       navigator.vibrate([180, 90, 220])
     } catch {
@@ -55,6 +100,21 @@ export function playReminderChime(): void {
     }
   }
 
+  if (soundType === 'silent') {
+    return
+  }
+
+  if (soundType === 'chime') {
+    playWebAudioChime()
+    return
+  }
+
+  if (soundType === 'bell') {
+    playWebAudioBell()
+    return
+  }
+
+  // 'voice' or 'system' default
   if (typeof Audio !== 'undefined') {
     try {
       if (!cachedReminderAudio) {
@@ -66,7 +126,7 @@ export function playReminderChime(): void {
       const playPromise = cachedReminderAudio.play()
       if (playPromise && typeof playPromise.catch === 'function') {
         playPromise.catch(() => {
-          playFallbackWebAudioChime()
+          playWebAudioChime()
         })
       }
       return
@@ -75,5 +135,12 @@ export function playReminderChime(): void {
     }
   }
 
-  playFallbackWebAudioChime()
+  playWebAudioChime()
+}
+
+/**
+ * Preview / test an alarm sound immediately for the user.
+ */
+export function previewAlarmSound(soundType: AlarmSoundType): void {
+  playReminderChime(soundType, true)
 }
