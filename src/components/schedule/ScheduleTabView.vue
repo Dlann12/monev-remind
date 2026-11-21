@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, shallowRef, watch } from 'vue'
+import { CURRENT_APP_VERSION } from '@/constants/appVersion'
 import {
   isNativePlatform,
   registerAppResumeListener
@@ -31,6 +32,7 @@ interface Emits {
   toggleHolidayToday: []
   testAlarm: []
   updateProfile: [patch: Partial<InternProfile>]
+  checkUpdate: []
 }
 
 const props = defineProps<Props>()
@@ -484,6 +486,36 @@ function saveTelegramConfig() {
           @click="saveTelegramConfig"
         >
           Simpan Telegram
+        </button>
+      </div>
+    </div>
+
+    <!-- App Version & In-App Update Check -->
+    <div class="bg-surface-container-lowest rounded-xl p-space-md shadow-sm space-y-3">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <h3 class="font-title-md text-title-md text-on-surface flex items-center gap-2">
+            <span>Pembaruan Aplikasi</span>
+            <span
+              class="text-xs font-semibold px-2 py-0.5 rounded-full bg-secondary-container text-on-secondary-container"
+            >
+              v{{ CURRENT_APP_VERSION }}
+            </span>
+          </h3>
+          <p class="font-body-sm text-body-sm text-on-surface-variant">
+            Pembaruan otomatis terpasang langsung di atas versi lama tanpa perlu menghapus aplikasi atau kehilangan data tersimpan.
+          </p>
+        </div>
+      </div>
+
+      <div class="pt-1 flex items-center justify-end">
+        <button
+          type="button"
+          class="px-4 py-2 rounded-xl bg-secondary text-on-secondary font-label-md text-label-md flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+          @click="emit('checkUpdate')"
+        >
+          <span class="material-symbols-outlined text-[18px]">sync</span>
+          <span>Periksa Pembaruan</span>
         </button>
       </div>
     </div>

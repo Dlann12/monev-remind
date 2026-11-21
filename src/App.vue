@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { shallowRef } from 'vue'
+import { onMounted, shallowRef } from 'vue'
 import AuthLoginGate from '@/components/auth/AuthLoginGate.vue'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import BottomNav from '@/components/layout/BottomNav.vue'
@@ -11,8 +11,10 @@ import NotificationsModal from '@/components/modals/NotificationsModal.vue'
 import PortalConnectModal from '@/components/modals/PortalConnectModal.vue'
 import ProfileModal from '@/components/modals/ProfileModal.vue'
 import QuickFillModal from '@/components/modals/QuickFillModal.vue'
+import UpdatePromptModal from '@/components/modals/UpdatePromptModal.vue'
 import { useMagangStore } from '@/composables/useMagangStore'
 import { useReminderEngine } from '@/composables/useReminderEngine'
+import { checkForAppUpdate, type AppUpdateInfo } from '@/services/updateService'
 import type { LatestDailyLogDraft } from '@/services/monevPortalService'
 import type { AppTab } from '@/types/app'
 
@@ -24,6 +26,7 @@ const isNotificationsOpen = shallowRef(false)
 const isProfileOpen = shallowRef(false)
 const isConnectPortalOpen = shallowRef(false)
 const isQuickFillOpen = shallowRef(false)
+const availableUpdate = shallowRef<AppUpdateInfo | null>(null)
 const toastMessage = shallowRef('')
 
 function showToast(msg: string) {
@@ -32,6 +35,26 @@ function showToast(msg: string) {
     if (toastMessage.value === msg) toastMessage.value = ''
   }, 3500)
 }
+
+async function handleCheckForUpdate(manual = false) {
+  try {
+    const info = await checkForAppUpdate()
+    if (info.hasUpdate) {
+      availableUpdate.value = info
+    } else if (manual) {
+      showToast(`Aplikasi sudah versi terbaru (v${info.currentVersion}).`)
+    }
+  } catch {
+    if (manual) {
+      showToast('Gagal memeriksa pembaruan saat ini.')
+    }
+  }
+}
+
+onMounted(() => {
+  // Check for app update in the background when app loads
+  handleCheckForUpdate(false)
+})
 
 async function handleSyncNow() {
   const res = await store.syncPortalStatus()
@@ -168,6 +191,7 @@ async function handleTestAlarm() {
           @toggle-holiday-today="store.toggleHolidayToday()"
           @test-alarm="handleTestAlarm"
           @update-profile="store.updateProfile($event)"
+          @check-update="handleCheckForUpdate(true)"
         />
 
         <HistoryTabView
@@ -234,6 +258,14 @@ async function handleTestAlarm() {
         :profile-company="store.profile.value.company"
         @close="isQuickFillOpen = false"
         @submit="handleQuickFillSubmit"
+      />
+
+      <!-- In-App Auto-Update Modal -->
+      <UpdatePromptModal
+        v-if="availableUpdate"
+        :update-info="availableUpdate"
+        @close="availableUpdate = null"
+        @toast="showToast"
       />
     </template>
 

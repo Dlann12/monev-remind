@@ -29,6 +29,7 @@ import {
   detectMonevCategory,
   generateMonevFromShortActivity
 } from '@/utils/monevGenerator'
+import { checkForAppUpdate, isNewerVersion } from '@/services/updateService'
 
 describe('Workday, holiday, 17:00 catch-up, and 23:00 auto-fill logic', () => {
   it('marks Monday-Friday as active workdays when not a holiday', () => {
@@ -538,5 +539,44 @@ describe('Offline Monev Auto-Generator', () => {
     expect(v0.activity_log).toContain('bikin halaman login dan fix bug api')
     expect(v0.obstacles).toContain('sempat terkendala error CORS')
     expect(v0.activity_log).not.toBe(v1.activity_log)
+  })
+
+  describe('In-app update checking and semantic version comparison', () => {
+    it('compares semantic version strings accurately', () => {
+      expect(isNewerVersion('1.3.0', '1.2.2')).toBe(true)
+      expect(isNewerVersion('v1.3.0', '1.2.2')).toBe(true)
+      expect(isNewerVersion('2.0.0', '1.9.9')).toBe(true)
+      expect(isNewerVersion('1.2.3', '1.2.2')).toBe(true)
+      expect(isNewerVersion('1.2.2', '1.2.2')).toBe(false)
+      expect(isNewerVersion('1.2.1', '1.2.2')).toBe(false)
+      expect(isNewerVersion('v1.2.2', '1.2.2')).toBe(false)
+      expect(isNewerVersion('0.9.9', '1.0.0')).toBe(false)
+    })
+
+    it('parses GitHub release API and detects available updates', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          tag_name: 'v1.4.0',
+          name: 'MagangHub Reminder v1.4.0',
+          body: 'Fitur pembaruan otomatis',
+          published_at: '2026-11-21T10:00:00Z',
+          assets: [
+            {
+              name: 'MagangHub-Reminder.apk',
+              browser_download_url:
+                'https://github.com/Dlann12/monev-remind/releases/download/v1.4.0/MagangHub-Reminder.apk'
+            }
+          ]
+        })
+      })
+      vi.stubGlobal('fetch', mockFetch)
+
+      const result = await checkForAppUpdate()
+      expect(result.hasUpdate).toBe(true)
+      expect(result.latestVersion).toBe('1.4.0')
+      expect(result.downloadUrl).toContain('MagangHub-Reminder.apk')
+      expect(result.releaseNotes).toBe('Fitur pembaruan otomatis')
+    })
   })
 })

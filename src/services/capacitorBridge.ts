@@ -4,6 +4,7 @@ import { App } from '@capacitor/app'
 import type { AlarmRule, MonevRecord, ScheduleConfig } from '@/types/app'
 import { playReminderChime } from '@/utils/audio'
 import { getZonedTargetInstant, isWorkdayActive } from '@/utils/dateTime'
+import { MonevSync } from '@/services/monevPortalService'
 
 export const MONEV_NOTIFICATION_CHANNEL_ID = 'monev_voice_alarm_v1'
 export const MONEV_CUSTOM_SOUND_FILE = 'reminder_sound.mp3'
@@ -98,7 +99,19 @@ export async function triggerImmediateAlert(
 }
 
 /**
- * Syncs recurring native Android local notifications on Capacitor.
+ * Stops any actively ringing native alarm audio on Android.
+ */
+export async function stopNativeAlarmAudio(): Promise<void> {
+  if (!isNativePlatform()) return
+  try {
+    await MonevSync.stopAlarmAudio()
+  } catch {
+    // Ignore if plugin not ready
+  }
+}
+
+/**
+ * Syncs recurring native Android local notifications and AlarmManager.setAlarmClock.
  * Automatically cancels snooze alarms once today's Monev is marked filled.
  */
 export async function syncNativeAlarms(
@@ -109,6 +122,33 @@ export async function syncNativeAlarms(
 ): Promise<void> {
   if (!isNativePlatform()) return
 
+  // 1. Sync Native AlarmClock via AlarmManager (wakes deep Doze at exact wall-clock millisecond)
+  try {
+    const enabledList = alarms.filter((a) => a.enabled)
+    await MonevSync.syncNativeAlarmClocks({
+      alarms: enabledList.map((a) => ({
+        id: a.id,
+        title: a.title,
+        time: a.time,
+        enabled: a.enabled,
+        kind: a.kind
+      })),
+      timezone: schedule.timezone,
+      workDaysCsv: schedule.workDays.join(','),
+      holidayOverrideDate:
+        todayRecord && todayRecord.isHolidayOverride ? todayRecord.date : '',
+      todayFilled,
+      snoozeEnabled: schedule.snoozeEnabled
+    })
+
+    if (todayFilled) {
+      await stopNativeAlarmAudio()
+    }
+  } catch {
+    // Ignore fallback below
+  }
+
+  // 2. Sync LocalNotifications as secondary redundancy
   try {
     const pending = await LocalNotifications.getPending()
     if (pending.notifications.length > 0) {
@@ -182,7 +222,10 @@ export async function syncNativeAlarms(
 export function registerAppResumeListener(onResume: () => void): () => void {
   if (isNativePlatform()) {
     const handlePromise = App.addListener('appStateChange', ({ isActive }) => {
-      if (isActive) onResume()
+      if (isActive) {
+        stopNativeAlarmAudio().catch(() => {})
+        onResume()
+      }
     })
     return () => {
       handlePromise.then((h) => h.remove()).catch(() => {})

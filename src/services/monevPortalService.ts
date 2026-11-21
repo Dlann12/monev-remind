@@ -183,6 +183,35 @@ interface MonevSyncPlugin {
     holidayOverrideDate?: string
     workDaysCsv?: string
   }): Promise<void>
+  syncNativeAlarmClocks(options: {
+    alarms: Array<{
+      id: string
+      title: string
+      time: string
+      enabled: boolean
+      kind: 'primary' | 'snooze'
+    }>
+    timezone: string
+    workDaysCsv?: string
+    holidayOverrideDate?: string
+    todayFilled?: boolean
+    snoozeEnabled?: boolean
+  }): Promise<{
+    scheduled: boolean
+    nextTriggerMillis?: number
+    nextAlarmTime?: string
+  }>
+  cancelNativeAlarmClocks(): Promise<void>
+  stopAlarmAudio(): Promise<void>
+  downloadAndInstallUpdate(options: {
+    url: string
+    version: string
+  }): Promise<{
+    state: 'install_launched' | 'error'
+    apkPath?: string
+    fileSize?: number
+    error?: string
+  }>
   getDeviceAlarmStatus(): Promise<DeviceAlarmPermissions>
   openDeviceAlarmSettings(options?: {
     target?: 'exact_alarm' | 'battery'
@@ -190,7 +219,7 @@ interface MonevSyncPlugin {
   clearPortalSession(): Promise<void>
 }
 
-const MonevSync = registerPlugin<MonevSyncPlugin>('MonevSync')
+export const MonevSync = registerPlugin<MonevSyncPlugin>('MonevSync')
 
 export interface MonevStatusCheckResult {
   outcome:

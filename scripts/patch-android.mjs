@@ -9,7 +9,7 @@ if (!existsSync(manifestPath)) {
   process.exit(0)
 }
 
-// 1. Patch AndroidManifest.xml permissions, network config, and AutoMonevReceiver
+// 1. Patch AndroidManifest.xml permissions, network config, and Receivers
 let manifest = readFileSync(manifestPath, 'utf-8')
 const permissions = [
   'android.permission.INTERNET',
@@ -17,7 +17,10 @@ const permissions = [
   'android.permission.SCHEDULE_EXACT_ALARM',
   'android.permission.USE_EXACT_ALARM',
   'android.permission.RECEIVE_BOOT_COMPLETED',
-  'android.permission.VIBRATE'
+  'android.permission.VIBRATE',
+  'android.permission.WAKE_LOCK',
+  'android.permission.REQUEST_INSTALL_PACKAGES',
+  'android.permission.FOREGROUND_SERVICE'
 ]
 
 const missing = permissions.filter((perm) => !manifest.includes(perm))
@@ -54,6 +57,39 @@ if (!manifest.includes('AutoMonevReceiver')) {
   console.log('Registered AutoMonevReceiver in AndroidManifest.xml')
 }
 
+if (!manifest.includes('AlarmReceiver')) {
+  const alarmReceiverTag = `
+        <receiver
+            android:name="id.go.kemnaker.maganghub.reminder.AlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="id.go.kemnaker.maganghub.reminder.ACTION_TRIGGER_MONEV_ALARM" />
+                <action android:name="id.go.kemnaker.maganghub.reminder.ACTION_STOP_ALARM_SOUND" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>`
+  manifest = manifest.replace('</application>', alarmReceiverTag)
+  console.log('Registered AlarmReceiver in AndroidManifest.xml')
+}
+
+if (!manifest.includes('androidx.core.content.FileProvider')) {
+  const providerTag = `
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="id.go.kemnaker.maganghub.reminder.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>`
+  manifest = manifest.replace('</application>', providerTag)
+  console.log('Registered FileProvider in AndroidManifest.xml')
+}
+
 writeFileSync(manifestPath, manifest, 'utf-8')
 
 // 1b. Create res/xml/network_security_config.xml (allows http->https SSO redirect on kemnaker.go.id)
@@ -71,6 +107,18 @@ const networkSecurityXml = `<?xml version="1.0" encoding="utf-8"?>
 `
 writeFileSync(resolve(xmlDir, 'network_security_config.xml'), networkSecurityXml, 'utf-8')
 console.log('Generated res/xml/network_security_config.xml')
+
+// 1c. Create res/xml/file_paths.xml (for FileProvider APK installation)
+const filePathsXml = `<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <external-cache-path name="external_cache" path="." />
+    <cache-path name="internal_cache" path="." />
+    <external-files-path name="external_files" path="." />
+    <files-path name="internal_files" path="." />
+</paths>
+`
+writeFileSync(resolve(xmlDir, 'file_paths.xml'), filePathsXml, 'utf-8')
+console.log('Generated res/xml/file_paths.xml')
 
 // 2. Write Java classes for Monev portal sync, complete history fetching, and 23:00 auto-fill
 const javaPkgDir = resolve(
@@ -828,11 +876,18 @@ import android.os.Build;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.webkit.CookieManager;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -1147,6 +1202,154 @@ public class MonevSyncPlugin extends Plugin {
         AutoMonevReceiver.cancelAlarm(getContext());
         call.resolve();
     }
+
+    @PluginMethod
+    public void syncNativeAlarmClocks(PluginCall call) {
+        JSArray alarms = call.getArray("alarms");
+        String timezone = call.getString("timezone", "Asia/Jakarta");
+        String workDaysCsv = call.getString("workDaysCsv", "1,2,3,4,5");
+        String holidayOverrideDate = call.getString("holidayOverrideDate", "");
+        boolean todayFilled = Boolean.TRUE.equals(call.getBoolean("todayFilled", false));
+        boolean snoozeEnabled = Boolean.TRUE.equals(call.getBoolean("snoozeEnabled", true));
+
+        SharedPreferences prefs = getContext().getSharedPreferences(
+            MonevApiHelper.PREFS_NAME, Context.MODE_PRIVATE
+        );
+        prefs.edit()
+            .putString("alarms_config", alarms != null ? alarms.toString() : "[]")
+            .putString("alarm_timezone", timezone != null ? timezone : "Asia/Jakarta")
+            .putString("work_days_csv", workDaysCsv != null ? workDaysCsv : "1,2,3,4,5")
+            .putString("holiday_override_date", holidayOverrideDate != null ? holidayOverrideDate : "")
+            .putBoolean("today_filled", todayFilled)
+            .putBoolean("snooze_enabled", snoozeEnabled)
+            .apply();
+
+        AlarmReceiver.scheduleNextAlarmClock(getContext());
+        JSObject res = new JSObject();
+        res.put("scheduled", true);
+        call.resolve(res);
+    }
+
+    @PluginMethod
+    public void cancelNativeAlarmClocks(PluginCall call) {
+        AlarmReceiver.cancelAlarmClock(getContext());
+        AlarmReceiver.stopRinging(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void stopAlarmAudio(PluginCall call) {
+        AlarmReceiver.stopRinging(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void downloadAndInstallUpdate(final PluginCall call) {
+        final String downloadUrl = call.getString("url", "");
+        final String version = call.getString("version", "latest");
+        if (downloadUrl == null || downloadUrl.isEmpty()) {
+            call.reject("URL download APK kosong");
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                Context context = getContext();
+                File cacheDir = context.getExternalCacheDir() != null
+                    ? context.getExternalCacheDir()
+                    : context.getCacheDir();
+                File apkFile = new File(cacheDir, "MagangHub-Reminder-" + version + ".apk");
+                if (apkFile.exists()) {
+                    apkFile.delete();
+                }
+
+                URL currentUrl = new URL(downloadUrl);
+                HttpURLConnection conn = null;
+                int redirects = 0;
+                while (redirects < 5) {
+                    conn = (HttpURLConnection) currentUrl.openConnection();
+                    conn.setInstanceFollowRedirects(true);
+                    conn.setRequestProperty("User-Agent", "MonevMagangHubReminder-Android");
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(30000);
+                    conn.connect();
+
+                    int status = conn.getResponseCode();
+                    if (status == HttpURLConnection.HTTP_MOVED_TEMP
+                        || status == HttpURLConnection.HTTP_MOVED_PERM
+                        || status == 307
+                        || status == 308) {
+                        String loc = conn.getHeaderField("Location");
+                        conn.disconnect();
+                        if (loc == null || loc.isEmpty()) break;
+                        currentUrl = new URL(loc);
+                        redirects++;
+                    } else {
+                        break;
+                    }
+                }
+
+                if (conn == null) {
+                    JSObject err = new JSObject();
+                    err.put("state", "error");
+                    err.put("error", "Koneksi ke server unduhan gagal.");
+                    call.resolve(err);
+                    return;
+                }
+
+                try (InputStream in = conn.getInputStream();
+                     OutputStream out = new FileOutputStream(apkFile)) {
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+                    while ((bytesRead = in.read(buffer)) != -1) {
+                        out.write(buffer, 0, bytesRead);
+                    }
+                    out.flush();
+                }
+                conn.disconnect();
+
+                if (!apkFile.exists() || apkFile.length() < 10000) {
+                    JSObject err = new JSObject();
+                    err.put("state", "error");
+                    err.put("error", "File APK yang diunduh tidak valid.");
+                    call.resolve(err);
+                    return;
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    if (!context.getPackageManager().canRequestPackageInstalls()) {
+                        Intent permIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                        permIntent.setData(Uri.parse("package:" + context.getPackageName()));
+                        permIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        context.startActivity(permIntent);
+                    }
+                }
+
+                Uri apkUri = androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    context.getPackageName() + ".fileprovider",
+                    apkFile
+                );
+
+                Intent installIntent = new Intent(Intent.ACTION_VIEW);
+                installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(installIntent);
+
+                JSObject res = new JSObject();
+                res.put("state", "install_launched");
+                res.put("apkPath", apkFile.getAbsolutePath());
+                res.put("fileSize", apkFile.length());
+                call.resolve(res);
+            } catch (Exception ex) {
+                JSObject res = new JSObject();
+                res.put("state", "error");
+                res.put("error", ex.getMessage());
+                call.resolve(res);
+            }
+        });
+    }
 }
 `
 
@@ -1384,10 +1587,435 @@ public class AutoMonevReceiver extends BroadcastReceiver {
 }
 `
 
+const alarmReceiverJava = `package id.go.kemnaker.maganghub.reminder;
+
+import android.app.AlarmManager;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.media.AudioAttributes;
+import android.media.MediaPlayer;
+import android.media.RingtoneManager;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.PowerManager;
+import androidx.core.app.NotificationCompat;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.Locale;
+import java.util.TimeZone;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public class AlarmReceiver extends BroadcastReceiver {
+
+    public static final String ACTION_TRIGGER_MONEV_ALARM = "id.go.kemnaker.maganghub.reminder.ACTION_TRIGGER_MONEV_ALARM";
+    public static final String ACTION_STOP_ALARM_SOUND = "id.go.kemnaker.maganghub.reminder.ACTION_STOP_ALARM_SOUND";
+    private static final String CHANNEL_ID = "monev_voice_alarm_clock_v2";
+    private static final int ALARM_REQUEST_CODE = 1700;
+    private static final int NOTIF_ALARM_ID = 1701;
+
+    private static MediaPlayer sMediaPlayer = null;
+    private static PowerManager.WakeLock sWakeLock = null;
+    private static final Handler sHandler = new Handler(Looper.getMainLooper());
+    private static final Runnable sAutoStopRunnable = () -> stopRingingInternal();
+
+    @Override
+    public void onReceive(final Context context, final Intent intent) {
+        final String action = intent != null ? intent.getAction() : "";
+
+        if (Intent.ACTION_BOOT_COMPLETED.equals(action) || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
+            scheduleNextAlarmClock(context);
+            return;
+        }
+
+        if (ACTION_STOP_ALARM_SOUND.equals(action)) {
+            stopRinging(context);
+            return;
+        }
+
+        if (ACTION_TRIGGER_MONEV_ALARM.equals(action)) {
+            acquireWakeLock(context, 45000L);
+
+            SharedPreferences prefs = context.getSharedPreferences(
+                MonevApiHelper.PREFS_NAME, Context.MODE_PRIVATE
+            );
+
+            String todayStr = getTodayDateString(prefs.getString("alarm_timezone", "Asia/Jakarta"));
+            if (todayStr.equals(prefs.getString("last_submitted_date", ""))) {
+                releaseWakeLock();
+                scheduleNextAlarmClock(context);
+                return;
+            }
+            if (prefs.getBoolean("today_filled", false)) {
+                releaseWakeLock();
+                scheduleNextAlarmClock(context);
+                return;
+            }
+
+            if (todayStr.equals(prefs.getString("holiday_override_date", ""))) {
+                releaseWakeLock();
+                scheduleNextAlarmClock(context);
+                return;
+            }
+
+            String workDaysCsv = prefs.getString("work_days_csv", "1,2,3,4,5");
+            Calendar tzCal = Calendar.getInstance(TimeZone.getTimeZone(prefs.getString("alarm_timezone", "Asia/Jakarta")));
+            int calDay = tzCal.get(Calendar.DAY_OF_WEEK);
+            int isoDay = (calDay == Calendar.SUNDAY) ? 7 : (calDay - 1);
+            if (!isIsoDayEnabled(workDaysCsv, isoDay)) {
+                releaseWakeLock();
+                scheduleNextAlarmClock(context);
+                return;
+            }
+
+            String alarmTitle = intent.getStringExtra("alarm_title");
+            if (alarmTitle == null || alarmTitle.isEmpty()) {
+                alarmTitle = "Waktunya Isi Absen Monev!";
+            }
+            String alarmBody = "Jangan lupa isi monev! Absen Monev MagangHub hari ini belum diisi.";
+
+            startAlarmSound(context);
+            postAlarmNotification(context, alarmTitle, alarmBody);
+            scheduleNextAlarmClock(context);
+        }
+    }
+
+    private static synchronized void acquireWakeLock(Context context, long timeoutMs) {
+        try {
+            if (sWakeLock == null) {
+                PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    sWakeLock = pm.newWakeLock(
+                        PowerManager.PARTIAL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                        "MagangHub:AlarmWakeLock"
+                    );
+                    sWakeLock.setReferenceCounted(false);
+                }
+            }
+            if (sWakeLock != null && !sWakeLock.isHeld()) {
+                sWakeLock.acquire(timeoutMs);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private static synchronized void releaseWakeLock() {
+        try {
+            if (sWakeLock != null && sWakeLock.isHeld()) {
+                sWakeLock.release();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private static synchronized void startAlarmSound(Context context) {
+        stopRingingInternal();
+        try {
+            int rawSoundRes = context.getResources().getIdentifier(
+                "reminder_sound", "raw", context.getPackageName()
+            );
+            Uri soundUri = rawSoundRes != 0
+                ? Uri.parse("android.resource://" + context.getPackageName() + "/" + rawSoundRes)
+                : RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+
+            sMediaPlayer = new MediaPlayer();
+            sMediaPlayer.setDataSource(context, soundUri);
+            AudioAttributes attrs = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build();
+            sMediaPlayer.setAudioAttributes(attrs);
+            sMediaPlayer.setLooping(true);
+            sMediaPlayer.prepare();
+            sMediaPlayer.start();
+
+            sHandler.removeCallbacks(sAutoStopRunnable);
+            sHandler.postDelayed(sAutoStopRunnable, 45000L);
+        } catch (Exception ex) {
+            try {
+                Uri fallbackUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                sMediaPlayer = MediaPlayer.create(context, fallbackUri);
+                if (sMediaPlayer != null) {
+                    sMediaPlayer.start();
+                }
+            } catch (Exception ignored) {}
+        }
+    }
+
+    public static synchronized void stopRinging(Context context) {
+        stopRingingInternal();
+        try {
+            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                nm.cancel(NOTIF_ALARM_ID);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private static synchronized void stopRingingInternal() {
+        sHandler.removeCallbacks(sAutoStopRunnable);
+        try {
+            if (sMediaPlayer != null) {
+                if (sMediaPlayer.isPlaying()) {
+                    sMediaPlayer.stop();
+                }
+                sMediaPlayer.reset();
+                sMediaPlayer.release();
+                sMediaPlayer = null;
+            }
+        } catch (Exception ignored) {}
+        releaseWakeLock();
+    }
+
+    private static void postAlarmNotification(Context context, String title, String body) {
+        try {
+            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) return;
+
+            int rawSoundRes = context.getResources().getIdentifier(
+                "reminder_sound", "raw", context.getPackageName()
+            );
+            Uri soundUri = rawSoundRes != 0
+                ? Uri.parse("android.resource://" + context.getPackageName() + "/" + rawSoundRes)
+                : null;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm.getNotificationChannel(CHANNEL_ID) == null) {
+                NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "Alarm Pengingat Monev (Layar Terkunci)",
+                    NotificationManager.IMPORTANCE_HIGH
+                );
+                channel.setDescription("Pengingat suara dan layar terkunci untuk pengisian Monev MagangHub");
+                channel.enableVibration(true);
+                channel.setBypassDnd(true);
+                channel.setLockscreenVisibility(NotificationCompat.VISIBILITY_PUBLIC);
+                if (soundUri != null) {
+                    AudioAttributes attrs = new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build();
+                    channel.setSound(soundUri, attrs);
+                }
+                nm.createNotificationChannel(channel);
+            }
+
+            int smallIcon = context.getResources().getIdentifier(
+                "ic_stat_alarm", "drawable", context.getPackageName()
+            );
+            if (smallIcon == 0) {
+                smallIcon = android.R.drawable.ic_lock_idle_alarm;
+            }
+
+            Intent openIntent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+            if (openIntent != null) {
+                openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                openIntent.putExtra("from_alarm", true);
+            }
+            PendingIntent openPendingIntent = openIntent != null
+                ? PendingIntent.getActivity(
+                    context,
+                    NOTIF_ALARM_ID,
+                    openIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                )
+                : null;
+
+            Intent stopIntent = new Intent(context, AlarmReceiver.class);
+            stopIntent.setAction(ACTION_STOP_ALARM_SOUND);
+            PendingIntent stopPendingIntent = PendingIntent.getBroadcast(
+                context,
+                NOTIF_ALARM_ID + 1,
+                stopIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+            );
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(smallIcon)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setAutoCancel(true)
+                .setOngoing(true)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Matikan Alarm", stopPendingIntent)
+                .addAction(android.R.drawable.ic_menu_edit, "Isi Monev", openPendingIntent);
+
+            if (openPendingIntent != null) {
+                builder.setContentIntent(openPendingIntent);
+                builder.setFullScreenIntent(openPendingIntent, true);
+            }
+
+            nm.notify(NOTIF_ALARM_ID, builder.build());
+        } catch (Exception ignored) {}
+    }
+
+    public static void scheduleNextAlarmClock(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(
+            MonevApiHelper.PREFS_NAME, Context.MODE_PRIVATE
+        );
+
+        String alarmsJson = prefs.getString("alarms_config", "");
+        if (alarmsJson.isEmpty()) {
+            cancelAlarmClock(context);
+            return;
+        }
+
+        String tzStr = prefs.getString("alarm_timezone", "Asia/Jakarta");
+        TimeZone tz = TimeZone.getTimeZone(tzStr);
+        String workDaysCsv = prefs.getString("work_days_csv", "1,2,3,4,5");
+        String holidayOverrideDate = prefs.getString("holiday_override_date", "");
+        boolean todayFilled = prefs.getBoolean("today_filled", false);
+        boolean snoozeEnabled = prefs.getBoolean("snooze_enabled", true);
+
+        long nowMillis = System.currentTimeMillis();
+        long earliestTrigger = Long.MAX_VALUE;
+        String nextTitle = "Pengingat Monev MagangHub";
+        String nextTime = "";
+        String nextId = "";
+
+        try {
+            JSONArray alarmsArr = new JSONArray(alarmsJson);
+            SimpleDateFormat dayFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+            dayFormat.setTimeZone(tz);
+
+            for (int dayOffset = 0; dayOffset < 7; dayOffset++) {
+                Calendar dayCal = Calendar.getInstance(tz);
+                dayCal.setTimeInMillis(nowMillis);
+                dayCal.add(Calendar.DAY_OF_MONTH, dayOffset);
+                String dateKey = dayFormat.format(dayCal.getTime());
+
+                if (dateKey.equals(holidayOverrideDate)) {
+                    continue;
+                }
+
+                if (dayOffset == 0 && (todayFilled || dateKey.equals(prefs.getString("last_submitted_date", "")))) {
+                    continue;
+                }
+
+                int calDay = dayCal.get(Calendar.DAY_OF_WEEK);
+                int isoDay = (calDay == Calendar.SUNDAY) ? 7 : (calDay - 1);
+                if (!isIsoDayEnabled(workDaysCsv, isoDay)) {
+                    continue;
+                }
+
+                for (int i = 0; i < alarmsArr.length(); i++) {
+                    JSONObject obj = alarmsArr.getJSONObject(i);
+                    boolean enabled = obj.optBoolean("enabled", true);
+                    if (!enabled) continue;
+
+                    String kind = obj.optString("kind", "primary");
+                    if ("snooze".equals(kind) && !snoozeEnabled) continue;
+
+                    String timeStr = obj.optString("time", "17:00");
+                    String[] parts = timeStr.split(":");
+                    int hour = parts.length > 0 ? Integer.parseInt(parts[0]) : 17;
+                    int minute = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+
+                    Calendar triggerCal = Calendar.getInstance(tz);
+                    triggerCal.setTimeInMillis(dayCal.getTimeInMillis());
+                    triggerCal.set(Calendar.HOUR_OF_DAY, hour);
+                    triggerCal.set(Calendar.MINUTE, minute);
+                    triggerCal.set(Calendar.SECOND, 0);
+                    triggerCal.set(Calendar.MILLISECOND, 0);
+
+                    long triggerMillis = triggerCal.getTimeInMillis();
+                    if (triggerMillis > nowMillis + 5000L && triggerMillis < earliestTrigger) {
+                        earliestTrigger = triggerMillis;
+                        nextTitle = obj.optString("title", "Pengingat Monev MagangHub");
+                        nextTime = timeStr;
+                        nextId = obj.optString("id", "");
+                    }
+                }
+            }
+
+            AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) return;
+
+            if (earliestTrigger < Long.MAX_VALUE) {
+                Intent showIntent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+                PendingIntent showPi = showIntent != null
+                    ? PendingIntent.getActivity(
+                        context,
+                        1702,
+                        showIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                    )
+                    : null;
+
+                AlarmManager.AlarmClockInfo clockInfo = new AlarmManager.AlarmClockInfo(earliestTrigger, showPi);
+
+                Intent alarmIntent = new Intent(context, AlarmReceiver.class);
+                alarmIntent.setAction(ACTION_TRIGGER_MONEV_ALARM);
+                alarmIntent.putExtra("alarm_id", nextId);
+                alarmIntent.putExtra("alarm_title", nextTitle);
+                alarmIntent.putExtra("alarm_time", nextTime);
+
+                PendingIntent pi = PendingIntent.getBroadcast(
+                    context,
+                    ALARM_REQUEST_CODE,
+                    alarmIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                );
+
+                am.setAlarmClock(clockInfo, pi);
+            } else {
+                cancelAlarmClock(context);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    public static void cancelAlarmClock(Context context) {
+        try {
+            AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (am != null) {
+                Intent alarmIntent = new Intent(context, AlarmReceiver.class);
+                alarmIntent.setAction(ACTION_TRIGGER_MONEV_ALARM);
+                PendingIntent pi = PendingIntent.getBroadcast(
+                    context,
+                    ALARM_REQUEST_CODE,
+                    alarmIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+                );
+                am.cancel(pi);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private static String getTodayDateString(String tzStr) {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        sdf.setTimeZone(TimeZone.getTimeZone(tzStr));
+        return sdf.format(new Date());
+    }
+
+    private static boolean isIsoDayEnabled(String csv, int isoDay) {
+        if (csv == null || csv.trim().isEmpty()) {
+            return isoDay >= 1 && isoDay <= 5;
+        }
+        String target = String.valueOf(isoDay);
+        String[] parts = csv.split(",");
+        for (String part : parts) {
+            if (target.equals(part.trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+`
+
 writeFileSync(resolve(javaPkgDir, 'MonevApiHelper.java'), monevApiHelperJava, 'utf-8')
 writeFileSync(resolve(javaPkgDir, 'MonevSyncPlugin.java'), monevSyncJava, 'utf-8')
 writeFileSync(resolve(javaPkgDir, 'AutoMonevReceiver.java'), autoMonevReceiverJava, 'utf-8')
-console.log('Generated MonevApiHelper.java, MonevSyncPlugin.java, AutoMonevReceiver.java')
+writeFileSync(resolve(javaPkgDir, 'AlarmReceiver.java'), alarmReceiverJava, 'utf-8')
+console.log('Generated MonevApiHelper.java, MonevSyncPlugin.java, AutoMonevReceiver.java, AlarmReceiver.java')
 
 // 3. Register MonevSyncPlugin in MainActivity.java
 const mainActivityPath = resolve(javaPkgDir, 'MainActivity.java')
@@ -1401,6 +2029,13 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(MonevSyncPlugin.class);
         super.onCreate(savedInstanceState);
+        AlarmReceiver.stopRinging(this);
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        AlarmReceiver.stopRinging(this);
     }
 }
 `
@@ -1459,6 +2094,43 @@ if (existsSync(appGradlePath)) {
   let appGradle = readFileSync(appGradlePath, 'utf-8')
   appGradle = appGradle.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`)
   appGradle = appGradle.replace(/versionName\s+"[^"]*"/, `versionName "${rawVer}"`)
+
+  // 5c. Copy persistent release keystore & configure identical signing for in-place APK updates
+  const keystoreSrc = resolve(root, 'resources/android/signing/release.keystore')
+  const keystoreDst = resolve(root, 'android/app/release.keystore')
+  if (existsSync(keystoreSrc)) {
+    copyFileSync(keystoreSrc, keystoreDst)
+    console.log('Copied persistent release keystore to android/app/release.keystore')
+  }
+
+  if (!appGradle.includes('signingConfigs {')) {
+    const signingBlock = `
+    signingConfigs {
+        release {
+            storeFile file('release.keystore')
+            storePassword 'monevmaganghub'
+            keyAlias 'maganghub'
+            keyPassword 'monevmaganghub'
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.release
+        }
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+`
+    appGradle = appGradle.replace(
+      /buildTypes\s*\{[\s\S]*?release\s*\{[\s\S]*?\}\s*\}/,
+      signingBlock.trim()
+    )
+    console.log('Injected persistent release signingConfigs to android/app/build.gradle')
+  }
+
   writeFileSync(appGradlePath, appGradle, 'utf-8')
   console.log(`Updated Android versionName="${rawVer}" (versionCode=${versionCode})`)
 }
