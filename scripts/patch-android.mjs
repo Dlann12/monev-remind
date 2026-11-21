@@ -2008,20 +2008,6 @@ public class AlarmReceiver extends BroadcastReceiver {
         } catch (Exception ignored) {}
     }
 
-                PendingIntent pi = PendingIntent.getBroadcast(
-                    context,
-                    ALARM_REQUEST_CODE,
-                    alarmIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
-                );
-
-                am.setAlarmClock(clockInfo, pi);
-            } else {
-                cancelAlarmClock(context);
-            }
-        } catch (Exception ignored) {}
-    }
-
     public static void cancelAlarmClock(Context context) {
         try {
             AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
