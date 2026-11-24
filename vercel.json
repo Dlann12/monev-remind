@@ -1,0 +1,20 @@
+{
+  "framework": "vite",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/monev-api/(.*)",
+      "destination": "/api/monev-proxy?path=$1"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron-monev",
+      "schedule": "0 16 * * 1-5"
+    }
+  ]
+}
