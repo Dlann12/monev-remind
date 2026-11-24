@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "MagangHub Reminder — Monev Kemnaker",
+  "short_name": "MagangHub Reminder",
+  "version": "1.3.1",
+  "description": "Pengingat pengisian Monev harian MagangHub Kemnaker RI, riwayat absensi, dan auto-isi otomatis.",
+  "action": {
+    "default_popup": "index.html",
+    "default_icon": {
+      "16": "app-logo.png",
+      "48": "app-logo.png",
+      "128": "app-logo.png"
+    },
+    "default_title": "MagangHub Reminder"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "icons": {
+    "16": "app-logo.png",
+    "48": "app-logo.png",
+    "128": "app-logo.png"
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "activeTab",
+    "scripting",
+    "sidePanel",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "https://*.kemnaker.go.id/*",
+    "https://monev-api.maganghub.kemnaker.go.id/*",
+    "https://monev.maganghub.kemnaker.go.id/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "kemnaker_headers",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}

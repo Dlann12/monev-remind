@@ -1,0 +1,25 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        {
+          "header": "Origin",
+          "operation": "set",
+          "value": "https://monev.maganghub.kemnaker.go.id"
+        },
+        {
+          "header": "Referer",
+          "operation": "set",
+          "value": "https://monev.maganghub.kemnaker.go.id/"
+        }
+      ]
+    },
+    "condition": {
+      "urlFilter": "||monev-api.maganghub.kemnaker.go.id",
+      "resourceTypes": ["xmlhttprequest"]
+    }
+  }
+]

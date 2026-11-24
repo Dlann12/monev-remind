@@ -30,6 +30,14 @@
   .pt-safe {
     padding-top: env(safe-area-inset-top, 0px);
   }
+
+  html.extension-popup,
+  body.extension-popup {
+    width: 420px;
+    min-height: 580px;
+    max-height: 600px;
+    overflow-y: auto;
+  }
 }
 
 ::-webkit-scrollbar {

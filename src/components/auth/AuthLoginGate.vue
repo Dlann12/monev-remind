@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, shallowRef } from 'vue'
+import { computed, onMounted, shallowRef } from 'vue'
 import { isNativePlatform } from '@/services/capacitorBridge'
+import { isBrowserExtension } from '@/services/monevPortalService'
 import type { InternProfile } from '@/types/app'
 
 interface Props {
@@ -21,6 +22,9 @@ const emit = defineEmits<Emits>()
 const tokenInput = shallowRef('')
 const copiedSnippet = shallowRef(false)
 const isNative = computed(() => isNativePlatform())
+const isExtension = computed(() => isBrowserExtension())
+const isDetectingTab = shallowRef(false)
+const detectError = shallowRef('')
 const snippet = `copy(sessionStorage.getItem('monev_access_token'))`
 
 async function copySnippet() {
@@ -34,6 +38,64 @@ async function copySnippet() {
     copiedSnippet.value = false
   }
 }
+
+async function autoDetectExtensionSession() {
+  detectError.value = ''
+  if (typeof chrome === 'undefined' || !chrome.tabs) {
+    detectError.value = 'Fitur deteksi otomatis memerlukan ekstensi browser.'
+    return
+  }
+
+  isDetectingTab.value = true
+  try {
+    const tabs = await chrome.tabs.query({ url: '*://monev.maganghub.kemnaker.go.id/*' })
+    if (!tabs || tabs.length === 0) {
+      detectError.value = 'Tab MagangHub belum dibuka. Klik "Buka Portal Monev" terlebih dahulu.'
+      return
+    }
+
+    let foundToken = ''
+    for (const tab of tabs) {
+      if (!tab.id) continue
+      try {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            return (
+              sessionStorage.getItem('monev_access_token') ||
+              localStorage.getItem('monev_access_token') ||
+              ''
+            )
+          }
+        })
+        const t = results?.[0]?.result
+        if (t && typeof t === 'string' && t.trim()) {
+          foundToken = t.trim()
+          break
+        }
+      } catch {
+        // Tab might still be loading or restricted
+      }
+    }
+
+    if (foundToken) {
+      tokenInput.value = foundToken
+      emit('connectWithToken', foundToken)
+    } else {
+      detectError.value = 'Token belum ditemukan di tab MagangHub. Pastikan Anda sudah login di portal.'
+    }
+  } catch (err) {
+    detectError.value = 'Gagal membaca tab: ' + (err instanceof Error ? err.message : String(err))
+  } finally {
+    isDetectingTab.value = false
+  }
+}
+
+onMounted(() => {
+  if (isExtension.value) {
+    autoDetectExtensionSession()
+  }
+})
 
 function submitToken() {
   if (!tokenInput.value.trim()) return
@@ -143,14 +205,14 @@ function submitToken() {
         </div>
       </div>
 
-      <!-- Laptop Browser Preview Token Flow -->
+      <!-- Laptop Browser / Extension Token Flow -->
       <div
         v-if="!isNative"
         class="bg-surface-container-lowest rounded-xl p-space-md shadow-sm space-y-3"
       >
         <div class="flex items-center justify-between gap-2">
           <h2 class="font-title-md text-title-md text-on-surface">
-            2. Sinkronisasi Sesi di Browser Laptop
+            {{ isExtension ? '2. Hubungkan Sesi Ekstensi' : '2. Sinkronisasi Sesi di Browser Laptop' }}
           </h2>
           <button
             type="button"
@@ -159,6 +221,34 @@ function submitToken() {
           >
             {{ copiedSnippet ? 'Disalin!' : 'Salin Perintah' }}
           </button>
+        </div>
+
+        <!-- Extension Auto-Detection Option -->
+        <div v-if="isExtension" class="space-y-2 pb-1">
+          <button
+            type="button"
+            class="w-full bg-secondary text-on-secondary py-2.5 px-3 rounded-xl font-label-md text-label-md flex items-center justify-center gap-2 shadow-sm hover:brightness-105 active:scale-[0.99] transition-all"
+            :disabled="isDetectingTab || isSyncing"
+            @click="autoDetectExtensionSession"
+          >
+            <span
+              class="material-symbols-outlined text-[18px]"
+              :class="{ 'animate-spin': isDetectingTab }"
+            >
+              {{ isDetectingTab ? 'sync' : 'auto_detect_voice' }}
+            </span>
+            <span>{{ isDetectingTab ? 'Mendeteksi Tab MagangHub...' : 'Deteksi Sesi Otomatis dari Tab' }}</span>
+          </button>
+
+          <p v-if="detectError" class="font-body-sm text-[12px] text-error bg-error-container/20 rounded-lg p-2">
+            {{ detectError }}
+          </p>
+
+          <div class="flex items-center gap-2 pt-1">
+            <div class="h-px bg-outline-variant/30 flex-1"></div>
+            <span class="font-label-sm text-[11px] text-outline uppercase tracking-wider">Atau Tempel Manual</span>
+            <div class="h-px bg-outline-variant/30 flex-1"></div>
+          </div>
         </div>
 
         <p class="font-body-sm text-body-sm text-on-surface-variant">

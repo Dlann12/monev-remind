@@ -86,6 +86,18 @@ export interface LatestDailyLogDraft {
   obstacles: string
 }
 
+export function isBrowserExtension(): boolean {
+  return typeof chrome !== 'undefined' && Boolean(chrome?.runtime?.id)
+}
+
+export function getMonevApiUrl(endpoint: string): string {
+  const clean = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
+  if (isBrowserExtension()) {
+    return `https://monev-api.maganghub.kemnaker.go.id/api/v1${clean}`
+  }
+  return `/monev-api${clean}`
+}
+
 export const MONEV_MIN_CHARS = 100
 
 const MONEV_DEFAULT_TEXT: Record<'activity' | 'lesson' | 'obstacles', string> = {
@@ -676,7 +688,7 @@ async function fetchWebPaginatedAttendances(
       page: String(page),
       limit: String(pageSize)
     })
-    const res = await fetch(`/monev-api/attendances?${params.toString()}`, {
+    const res = await fetch(`${getMonevApiUrl('/attendances')}?${params.toString()}`, {
       method: 'GET',
       headers
     })
@@ -705,7 +717,7 @@ async function fetchWebPaginatedHolidays(
   let fetchedAnyPage = false
 
   for (let page = 1; page <= 10; page++) {
-    const res = await fetch(`/monev-api/holidays?page=${page}&limit=${pageSize}`, {
+    const res = await fetch(`${getMonevApiUrl('/holidays')}?page=${page}&limit=${pageSize}`, {
       method: 'GET',
       headers
     })
@@ -742,7 +754,7 @@ async function fetchWebDailyLogsInRange(
           date: monthFirst,
           limit: '100'
         })
-        const res = await fetch(`/monev-api/daily-logs?${params.toString()}`, {
+        const res = await fetch(`${getMonevApiUrl('/daily-logs')}?${params.toString()}`, {
           method: 'GET',
           headers
         })
@@ -843,9 +855,9 @@ async function runSingleCheck(
       Authorization: `Bearer ${cleanToken}`
     }
     const [homeRes, userRes] = await Promise.all([
-      fetch('/monev-api/users/me/home', { method: 'GET', headers }),
+      fetch(getMonevApiUrl('/users/me/home'), { method: 'GET', headers }),
       includeHistory
-        ? fetch('/monev-api/users/me', { method: 'GET', headers })
+        ? fetch(getMonevApiUrl('/users/me'), { method: 'GET', headers })
         : Promise.resolve(null)
     ])
 
@@ -925,7 +937,7 @@ async function runSingleCheck(
   } catch {
     return {
       outcome: 'unavailable',
-      note: 'Gagal menghubungi /monev-api (periksa koneksi internet atau jalankan via vite dev).',
+      note: 'Gagal menghubungi API MagangHub Kemnaker (periksa koneksi internet atau jalankan via vite dev).',
       checkedAt
     }
   }
@@ -1010,7 +1022,7 @@ export async function autoSubmitMonevFromYesterday(options: {
   }
 
   try {
-    const homeRes = await fetch('/monev-api/users/me/home', { method: 'GET', headers })
+    const homeRes = await fetch(getMonevApiUrl('/users/me/home'), { method: 'GET', headers })
     if (homeRes.status === 401 || homeRes.status === 403) {
       return {
         outcome: 'session_expired',
@@ -1042,7 +1054,7 @@ export async function autoSubmitMonevFromYesterday(options: {
 
     let draft: LatestDailyLogDraft | null = normalizedCustom
     if (!draft) {
-      const userRes = await fetch('/monev-api/users/me', { method: 'GET', headers })
+      const userRes = await fetch(getMonevApiUrl('/users/me'), { method: 'GET', headers })
       if (userRes.ok) {
         const userJson = (await userRes.json()) as MonevUserApiPayload
         const user = parseMonevUserPayload(userJson)
@@ -1078,7 +1090,7 @@ export async function autoSubmitMonevFromYesterday(options: {
 
     const readyDraft = normalizeDailyLogDraftForSubmit(draft)
 
-    const postRes = await fetch('/monev-api/attendances/with-daily-log', {
+    const postRes = await fetch(getMonevApiUrl('/attendances/with-daily-log'), {
       method: 'POST',
       headers: {
         ...headers,
